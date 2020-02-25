@@ -1,20 +1,23 @@
 #!/usr/local/bin/python2.6
 
 import sys,string,os
+
 sys.path.insert(1, os.path.join(sys.path[0], '..')) ### import parent dir dependencies
+sys.setrecursionlimit(5000)
+import export
 
 _script = 'AltAnalyze.py'
 _appName = "AltAnalyze"
-_appVersion = '2.0.9.4'
-_appDescription = "AltAnalyze is a freely available, open-source and cross-platform program that allows you to take RNASeq or "
-_appDescription +="relatively raw microarray data (CEL files or normalized), identify predicted alternative splicing or alternative "
-_appDescription +="promoter changes and view how these changes may affect protein sequence, domain composition, and microRNA targeting."
+_appVersion = '2.1.3'
+_appDescription = "AltAnalyze is a freely available, open-source and cross-platform program that allows you to processes raw bulk or single-cell RNASeq and "
+_appDescription +="microarray data, identify predicted alternative splicing or alternative promoter changes and "
+_appDescription +="view how these changes may affect protein sequence, domain composition, and microRNA targeting."
 _authorName = 'Nathan Salomonis'
-_authorEmail = 'nsalomonis@gmail.com'
+_authorEmail = 'altanalyze@gmail.com'
 _authorURL = 'http://www.altanalyze.org'
-_appIcon = "AltAnalyze_W7.ico"
+_appIcon = "build_scripts/AltAnalyze_W7.ico"
 
-excludes = ['wx'] #["wxPython"] #"numpy","scipy","matplotlib"
+excludes = ['wx','tests','iPython'] #["wxPython"] #"numpy","scipy","matplotlib"
 includes = ["mpmath", "numpy","sklearn.neighbors.typedefs",'sklearn.utils.lgamma','sklearn.manifold',
 	    'sklearn.utils.sparsetools._graph_validation','sklearn.utils.weight_vector',
 	    'pysam.TabProxies','pysam.ctabixproxies','patsy.builtins','dbhash','anydbm']
@@ -32,6 +35,8 @@ check the py2app print out to see where this file is in the future
 sudo mkdir /System/Library/Frameworks/Python.framework/Versions/2.6/lib/python2.6/lib-dynload/igraph/
 cp /Library/Python/2.6/site-packages/igraph/core.so /System/Library/Frameworks/Python.framework/Versions/2.6/lib/python2.6/lib-dynload/igraph/
 
+May require:
+python build_scripts/setup_binary.py py2app --frameworks /Library/Python/2.7/site-packages/llvmlite/binding/libllvmlite.dylib --packages llvmlite,numba
 """
 
 if sys.platform.startswith("darwin"):
@@ -41,25 +46,32 @@ if sys.platform.startswith("darwin"):
         import py2app
         import lxml
         import sklearn
+	import PIL._imaging
+	import PIL._imagingft
+	#import macholib_patch
         includes+= ["pkg_resources","distutils","lxml.etree","lxml._elementpath"] #"xml.sax.drivers2.drv_pyexpat"
+	frameworks = ['/Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/site-packages/PIL']
+	frameworks += ['/Library/Python/2.7/site-packages/llvmlite/binding/libllvmlite.dylib',
+	'/Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/site-packages/PIL/.dylibs/libopenjp2.2.1.0.dylib']
         """
-        resources = ['/System/Library/Frameworks/Python.framework/Versions/2.6/include/python2.6/pyconfig.h']
-        frameworks = ['/System/Library/Frameworks/Python.framework/Versions/2.6/include/python2.6/pyconfig.h']
-        frameworks += ['/System/Library/Frameworks/Python.framework/Versions/2.6/Extras/lib/python/pkg_resources.py']
-        frameworks += ['/System/Library/Frameworks/Python.framework/Versions/2.6/lib/python2.6/distutils/util.py']
-        frameworks += ['/System/Library/Frameworks/Python.framework/Versions/2.6/lib/python2.6/distutils/sysconfig.py']
+        resources = ['/System/Library/Frameworks/Python.framework/Versions/2.7']
+        frameworks = ['/System/Library/Frameworks/Python.framework/Versions/2.7/include/python2.7/pyconfig.h']
+        frameworks += ['/System/Library/Frameworks/Python.framework/Versions/2.7/Extras/lib/python/pkg_resources/__init__.py']
+        frameworks += ['/System/Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/distutils/util.py']
+        frameworks += ['/System/Library/Frameworks/Python.framework/Versions/2.7/lib/python2.7/distutils/sysconfig.py']
         import pkg_resources
         import distutils
         import distutils.sysconfig
         import distutils.util
         """
+
         options = {"py2app":
                     {"excludes": excludes,
                      "includes": includes,
                      #"frameworks": frameworks,
                      #"resources": resources,
-                     #argv_emulation = True,
-                     "iconfile": "altanalyze.icns"}
+                     #"argv_emulation": True,
+                     "iconfile": "build_scripts/altanalyze.icns"}
         }
         setup(name=_appName,
                         app=[_script],
@@ -73,11 +85,19 @@ if sys.platform.startswith("darwin"):
                         setup_requires=["py2app"]
         )
 
+	import UI
+	import shutil
+	scr_root = '/Users/saljh8/GitHub/accessory/.dylibs/'
+	des_root = '/Users/saljh8/GitHub/altanalyze/dist/AltAnalyze.app/Contents/Resources/lib/python2.7/lib-dynload/PIL/.dylibs/'
+	os.mkdir(des_root)
+	files = UI.read_directory(scr_root[:-1])
+	for file in files: 
+		shutil.copy(scr_root+file,des_root+file)
+
 if sys.platform.startswith("win"):
         ### example command: python setup.py py2exe
         from distutils.core import setup
         import py2exe
-        import suds
         import numpy
         import matplotlib
         import unique
@@ -89,12 +109,15 @@ if sys.platform.startswith("win"):
         import ctabix
         import csamtools
         import cvcf
+        from mpl_toolkits import mplot3d
         import dbhash
+        import matplotlib.backends.backend_tkagg
         import anydbm
         import six ### relates to a date-time dependency in matplotlib
         #sys.path.append(unique.filepath("Config\DLLs")) ### This is added, but DLLs still require addition to DLL python dir
         from distutils.filelist import findall
         import os
+        import mpl_toolkits
         excludes = []
         
         data_files=matplotlib.get_py2exe_datafiles()
@@ -102,6 +125,7 @@ if sys.platform.startswith("win"):
         matplotlibdatadir = matplotlib.get_data_path()
         matplotlibdata = findall(matplotlibdatadir)
         matplotlibdata_files = []
+        data_files += ['C:\Python27\Lib\site-packages\scipy\extra-dll\msvcr90.dll','C:\Python27\Lib\site-packages\scipy\extra-dll\msvcp90.dll','C:\Python27\Lib\site-packages\scipy\extra-dll\msvcm90.dll']
         for f in matplotlibdata:
             dirname = os.path.join('matplotlibdata', f[len(matplotlibdatadir)+1:])
             matplotlibdata_files.append((os.path.split(dirname)[0], [f]))
@@ -119,6 +143,16 @@ if sys.platform.startswith("win"):
                         "includes": 'matplotlib',
                         "includes": 'mpl_toolkits',
                         "includes": 'matplotlib.backends.backend_tkagg',
+                        "includes": 'mpl_toolkits.mplot3d',
+                        "includes": 'scipy._lib.messagestream',
+                        "includes": 'scipy.special._ufuncs_cxx',
+                        "includes": 'sklearn.neighbors.typedefs',
+                        "includes": 'sklearn.neighbors.ball_tree',
+                        "includes": 'sklearn.utils.lgamma',
+                        "includes": 'sklearn.linear_model.sgd_fast',
+                        "includes": 'scipy.special.cython_special',
+                        "includes": 'llvmlite.binding.ffi',
+                        "includes": 'numba.config',
                         #'includes': 'sklearn.neighbors.typedefs',
                         #'includes': 'sklearn.utils.lgamma',
                         #"includes": 'sklearn.utils.sparsetools._graph_validation',

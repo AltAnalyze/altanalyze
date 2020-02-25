@@ -97,7 +97,7 @@ def getArrayHeaders(expr_input_dir):
             x = 1
     return array_names, array_linker_db
 
-def checkExpressionFileFormat(expFile,reportNegatives=False):
+def checkExpressionFileFormat(expFile,reportNegatives=False,filterIDs=False):
     """ Determine if the data is log, non-log and increment value for log calculation """
     firstLine=True; convert=False
     inputMax=0; inputMin=10000; increment=0
@@ -117,6 +117,9 @@ def checkExpressionFileFormat(expFile,reportNegatives=False):
                 continue ### skip this row if analyzing a clustered heatmap file
             try: uid, coordinates = string.split(key,'=')
             except Exception: uid = key
+            if filterIDs!=False:
+                if uid not in filterIDs:
+                    continue
             if '' in t[1:]:
                 values = [0 if x=='' else x for x in t[startIndex:]]
             elif 'NA' in t[1:]:
@@ -173,6 +176,8 @@ def calculate_expression_measures(expr_input_dir,expr_group_dir,experiment_name,
             if arrayid[0]== ' ':
                 try: arrayid = arrayid[1:] ### Cufflinks issue
                 except Exception: arrayid = ' ' ### can be the first row UID column as blank
+            if 'ENSG' in arrayid and '.' in arrayid:
+                arrayid = string.split(arrayid,'.')[0]
         else:
             arrayid = 'UID'
         #if 'counts.' in expr_input_dir: arrayid,coordinates = string.split(arrayid,'=') ### needed for exon-level analyses only
@@ -222,8 +227,10 @@ def calculate_expression_measures(expr_input_dir,expr_group_dir,experiment_name,
                 #add this aftwards since these will also be used as index values
             x = 1
     print len(array_folds),"IDs imported...beginning to calculate statistics for all group comparisons"
-    expr_group_list,expr_group_db = importArrayGroups(expr_group_dir,array_linker_db)
+    expr_group_list,expr_group_db,dataType = importArrayGroups(expr_group_dir,array_linker_db,checkInputType=True)
     comp_group_list, comp_group_list2 = importComparisonGroups(comp_group_dir)
+    if dataType=='Kallisto':
+        return None, None
     
     if 'RPKM' in norm and 'counts.' in expr_input_dir: normalization_method = 'RPKM-counts' ### process as counts if analyzing the counts file
     else: normalization_method = norm
@@ -316,14 +323,20 @@ def simplerGroupImport(group_dir):
     fn = filepath(group_dir)
     for line in open(fn,'rU').xreadlines():
         data = cleanUpLine(line)
-        try: sample_filename,group_number,group_name = string.split(data,'\t')
+        try:
+            group_data = string.split(data,'\t')
+            sample_filename = group_data[0]
+            group_name = group_data[-1]
+            if len(group_data)>3:
+                forceError
         except Exception:
-            print string.split(data,'\t'), 'more than 3 columns present in groups file'
+            #print 'Non-Standard Groups file or missing relationships'
+            print string.split(data,'\t')[:10], 'more than 3 columns present in groups file'
             kill
         sample_group_db[sample_filename] = group_name
     return sample_group_db
 
-def simpleGroupImport(group_dir,splitHeaders=False):
+def simpleGroupImport(group_dir,splitHeaders=False, ignoreComps=False, reverseOrder=False):
     
     """ Used for calculating fold changes prior to clustering for individual samples (genomtric folds) """
     import collections
@@ -352,26 +365,35 @@ def simpleGroupImport(group_dir,splitHeaders=False):
         data = cleanUpLine(line)
         try: sample_filename,group_number,group_name = string.split(data,'\t')
         except Exception:
+            print traceback.format_exc()
             print "\nWARNING!!! Impropper groups file format detected. Terminating AltAnalyze. The groups file must have only three columns (sampleName, groupNumber, groupName).\n"
             forceGroupsError
         if splitHeaders:
             if '~' in sample_filename: sample_filename = string.split(sample_filename,'~')[-1]
         group_sample_db[sample_filename] = group_name+':'+sample_filename
-        try: group_name_sample_db[group_name].append(group_name+':'+sample_filename)
-        except Exception: group_name_sample_db[group_name] = [group_name+':'+sample_filename]
+        if reverseOrder==False:
+            try: group_name_sample_db[group_name].append(group_name+':'+sample_filename)
+            except Exception: group_name_sample_db[group_name] = [group_name+':'+sample_filename]
+        else:
+            try: group_name_sample_db[group_name].append(sample_filename)
+            except Exception: group_name_sample_db[group_name] = [sample_filename]
         sample_list.append(sample_filename)
         group_db[sample_filename] = group_name
         
         group_name_db[group_number]=group_name ### used by simpleCompsImport
         
     ### Get the comparisons indicated by the user
-    comps_name_db,comp_groups = simpleCompsImport(group_dir,group_name_db)
+    if ignoreComps==False: ### Not required for some analyses
+        comps_name_db,comp_groups = simpleCompsImport(group_dir,group_name_db,reverseOrder=reverseOrder)
+    else:
+        comps_name_db={}; comp_groups=[]
     return sample_list,group_sample_db,group_db,group_name_sample_db,comp_groups,comps_name_db
                 
-def simpleCompsImport(group_dir,group_name_db):
+def simpleCompsImport(group_dir,group_name_db,reverseOrder=False):
     """ Used for calculating fold changes prior to clustering for individual samples (genomtric folds) """
     comps_dir = string.replace(group_dir,'groups.','comps.')
-    comps_name_db={}
+    import collections
+    comps_name_db=collections.OrderedDict()
     comp_groups=[]
     comps_dir = verifyExpressionFile(comps_dir)
     fn = filepath(comps_dir)
@@ -379,6 +401,8 @@ def simpleCompsImport(group_dir,group_name_db):
         data = cleanUpLine(line)
         try:
             exp_group_num,con_group_num = string.split(data,'\t')
+            if reverseOrder:
+                con_group_num, exp_group_num = exp_group_num,con_group_num
             exp_group_name = group_name_db[exp_group_num]
             con_group_name = group_name_db[con_group_num]
             try: comps_name_db[con_group_name].append(exp_group_name)
@@ -394,11 +418,14 @@ def simpleCompsImport(group_dir,group_name_db):
         except Exception: pass ### Occurs if there are dummy lines in the file (returns with no values)
     return comps_name_db,comp_groups
 
-def importArrayGroups(expr_group_dir,array_linker_db):
-    new_index_order = 0    
+def importArrayGroups(expr_group_dir,array_linker_db,checkInputType=False):
+    new_index_order = 0
+    import collections
+    updated_groups = collections.OrderedDict()
     expr_group_list=[]
     expr_group_db = {} ### use when writing out data
     fn=filepath(expr_group_dir)
+    data_type='null'
     try:
         try: 
             for line in open(fn,'rU').xreadlines():
@@ -411,13 +438,22 @@ def importArrayGroups(expr_group_dir,array_linker_db):
                     ### compare new to original index order of arrays
                     try:
                         original_index_order = array_linker_db[array_header]
-                    except KeyError:
-                        print_out = 'WARNING!!! At least one sample-ID listed in the "groups." file (e.g.,'+array_header+')'+'\n is not in the sample "exp." file. See the new file "arrays." with all "exp." header names\nand correct "groups."' 
-                        try: UI.WarningWindow(print_out,'Critical Error - Exiting Program!!!')
-                        except Exception: print print_out
-                        exportArrayHeaders(expr_group_dir,array_linker_db)
-                        try: root.destroy(); sys.exit()
-                        except Exception: sys.exit()
+                    except:
+                        if array_header+'.bed' in array_linker_db:
+                            new_header = array_header+'.bed'
+                            original_index_order = array_linker_db[new_header]
+                            updated_groups[new_header]=group,group_name
+                        elif array_header[:-4] in array_linker_db:
+                            new_header = array_header[:-4]
+                            original_index_order = array_linker_db[new_header]
+                            updated_groups[new_header]=group,group_name      
+                        else:
+                            print_out = 'WARNING!!! At least one sample-ID listed in the "groups." file (e.g.,'+array_header+')'+'\n is not in the sample "exp." file. See the new file "arrays." with all "exp." header names\nand correct "groups."' 
+                            try: UI.WarningWindow(print_out,'Critical Error - Exiting Program!!!')
+                            except Exception: print print_out
+                            exportArrayHeaders(expr_group_dir,array_linker_db)
+                            try: root.destroy(); sys.exit()
+                            except Exception: sys.exit()
                     entry = new_index_order, original_index_order, group, group_name
                     expr_group_list.append(entry)
                     new_index_order += 1 ### add this aftwards since these will also be used as index values
@@ -434,8 +470,30 @@ def importArrayGroups(expr_group_dir,array_linker_db):
         print_out = 'No groups or comps files found for'+expr_group_dir+'... exiting program.'
         try: UI.WarningWindow(print_out,'Critical Error - Exiting Program!!!'); root.destroy(); sys.exit()
         except Exception: print print_out; sys.exit()
-        
-    return expr_group_list,expr_group_db
+    if len(updated_groups)>0 and checkInputType:
+        import shutil
+        try: ### When a Kallisto TPM and a gene-RPKM file co-exist (prioritize differential analysis of Kallisto)
+            shutil.copy(expr_group_dir,string.replace(expr_group_dir,'.txt','-Kallisto.txt'))
+            scr_exp_dir = string.replace(expr_group_dir,'groups.','Kallisto_Results/exp.')
+            dst_exp_dir = string.replace(expr_group_dir,'groups.','exp.')
+            shutil.copy(scr_exp_dir,string.replace(dst_exp_dir,'.txt','-Kallisto.txt'))
+            src_comps_dir = string.replace(expr_group_dir,'groups.','comps.')
+            shutil.copy(src_comps_dir,string.replace(src_comps_dir,'.txt','-Kallisto.txt'))
+        except:
+            pass
+        data_type='Kallisto'
+        exportUpdatedGroups(expr_group_dir,updated_groups)
+    if checkInputType:
+        return expr_group_list,expr_group_db,data_type
+    else:
+        return expr_group_list,expr_group_db
+
+def exportUpdatedGroups(expr_group_dir,updated_groups):
+    eo = export.ExportFile(expr_group_dir)
+    for sample in updated_groups:
+        eo.write(sample+'\t'+str(updated_groups[sample][0])+'\t'+updated_groups[sample][1]+'\n')
+    eo.close()
+    print 'The groups file has been updated with bed file sample names'
 
 def exportArrayHeaders(expr_group_dir,array_linker_db):
     new_file = string.replace(expr_group_dir,'groups.','arrays.')
@@ -950,12 +1008,14 @@ def exportGeometricFolds(filename,platform,genes_to_import,probeset_symbol,expor
     #print exportOutliers
     #print exportRelative
     #print customPath
-        
     """ Import sample and gene expression values from input file, filter, calculate geometric folds
     and export. Use for clustering and QC."""
     #print '\n',filename
     filename = string.replace(filename,'///','/')
     filename = string.replace(filename,'//','/')
+    status = 'yes'
+    convertGeneToSymbol = True
+    
     if 'ExpressionOutput' in filename:
         filename = string.replace(filename,'-steady-state.txt','.txt')
         export_path = string.replace(filename,'ExpressionOutput','ExpressionOutput/Clustering')
@@ -1075,12 +1135,24 @@ def exportGeometricFolds(filename,platform,genes_to_import,probeset_symbol,expor
                     for x in values:
                         try: log_folds.append(x-avg)
                         except Exception: log_folds.append('')
-
+    
                 if gene in genes_to_import:
                     ### Genes regulated in any user-indicated comparison according to the fold and pvalue cutoffs provided
                     log_folds = map(lambda x: str(x), log_folds)
-                    try: gene2 = gene+' '+probeset_symbol[gene]
+                    try:
+                        """
+                        if convertGeneToSymbol:
+                            if gene == probeset_symbol[gene]:
+                                gene2 = gene
+                                convertGeneToSymbol = False
+                            else:
+                                gene2 = gene+' '+probeset_symbol[gene]
+                        else:
+                            gene2 = gene
+                        """
+                        gene2 = gene+' '+probeset_symbol[gene]
                     except Exception: gene2 = gene
+                    #print [gene2,gene];sys.exit()
                     if len(t[1:])!=len(log_folds):
                         log_folds = t[1:] ### If NAs - output the original values
                     export_data.write(string.join([gene2]+log_folds,'\t')+'\n')
@@ -1524,7 +1596,7 @@ def parse_custom_annotations(filename):
     print len(custom_array_db), "custom array entries process"
     return custom_array_db
 
-def remoteLineageProfiler(params,expr_input_dir,ArrayType,Species,Vendor,customMarkers=False,specificPlatform=False):
+def remoteLineageProfiler(params,expr_input_dir,ArrayType,Species,Vendor,customMarkers=False,specificPlatform=False,visualizeNetworks=True):
     global species
     global array_type
     global vendor
@@ -1552,13 +1624,13 @@ def remoteLineageProfiler(params,expr_input_dir,ArrayType,Species,Vendor,customM
         #print traceback.format_exc()
         None
     
-    graphic_links = performLineageProfiler(expr_input_dir,graphics_links,customMarkers,specificPlatform=specificPlatform)
+    graphic_links = performLineageProfiler(expr_input_dir,graphics_links,customMarkers,specificPlatform=specificPlatform,visualizeNetworks=visualizeNetworks)
     return graphic_links
     
-def performLineageProfiler(expr_input_dir,graphic_links,customMarkers=False,specificPlatform=False):
+def performLineageProfiler(expr_input_dir,graphic_links,customMarkers=False,specificPlatform=False,visualizeNetworks=True):
     try:
         from visualization_scripts import WikiPathways_webservice
-        import LineageProfiler
+        import LineageProfiler; reload(LineageProfiler)
         start_time = time.time()
         try:
             compendium_type = fl.CompendiumType()
@@ -1590,8 +1662,14 @@ def performLineageProfiler(expr_input_dir,graphic_links,customMarkers=False,spec
         print compendium_platform
         print customMarkers
         """
+        if 'steady-state.txt' in expr_input_dir:
+            status = verifyFile(expr_input_dir)
+            if status != 'yes':
+                expr_input_dir = string.replace(expr_input_dir,'-steady-state.txt','.txt')
+                array_type_data = "3'array"
         try:
-            zscore_output_dir1 = LineageProfiler.runLineageProfiler(species,array_type_data,expr_input_dir, exp_output,compendium_type,compendium_platform,customMarkers); status = True
+            zscore_output_dir1 = LineageProfiler.runLineageProfiler(species,array_type_data,
+                    expr_input_dir,exp_output,compendium_type,compendium_platform,customMarkers); status = True
             #zscore_output_dir1 = None
         except Exception:
             print traceback.format_exc(),'\n'
@@ -1631,7 +1709,7 @@ def performLineageProfiler(expr_input_dir,graphic_links,customMarkers=False,spec
                 except Exception: pass
                 
             ### Color the TissueMap from WikiPathways using their webservice
-            if customMarkers==False:
+            if customMarkers==False and visualizeNetworks:
                 print 'Coloring LineageMap profiles using WikiPathways webservice...'
                 graphic_links = WikiPathways_webservice.viewLineageProfilerResults(export_path,graphic_links)
     except Exception:
@@ -1791,7 +1869,11 @@ def remoteExpressionBuilder(Species,Array_type,dabg_p,expression_threshold,
 
     m_cutoff = m_cutoff = math.log(float(GE_fold_cutoffs),2); p_cutoff = float(GE_pvalue_cutoffs); ptype_to_use = GE_ptype
   
-    print "Beginning to Process the",species,array_type,'dataset'
+    if array_type=="3'array":
+        platform_description = "gene-level"
+    else:
+        platform_description = array_type
+    print "Beginning to process the",species,platform_description,'dataset'
   
     process_custom = 'no'  
     if array_type == "custom": ### Keep this code for now, even though not currently used
@@ -1833,6 +1915,7 @@ def remoteExpressionBuilder(Species,Array_type,dabg_p,expression_threshold,
     if 'Ensembl' in vendor:
         annotate_db = importGeneAnnotations(species) ### populate annotate_db - mimicking export structure of exon array
 
+    original_platform = array_type
     global expr_threshold; global dabg_pval; global gene_exp_threshold; global gene_rpkm_threshold; dabg_pval = dabg_p
     altanalyze_files = []; datasets_with_all_necessary_files=0
     for dataset in exp_file_location_db:
@@ -1887,7 +1970,8 @@ def remoteExpressionBuilder(Species,Array_type,dabg_p,expression_threshold,
             for file in comparison_filename_list: altanalyze_files.append(file)
             residual_file_status = ExonArray.verifyFile(residuals_input_dir)
             ### Separate residual file into comparison files for AltAnalyze (if running FIRMA)
-            if residual_file_status == 'found': ExonArray.processResiduals(fl,Array_type,Species,perform_alt_analysis)
+            if residual_file_status == 'found':
+                ExonArray.processResiduals(fl,Array_type,Species,perform_alt_analysis)
         """
         from build_scripts import ExonArrayEnsemblRules
         source_biotype = array_type, root_dir
@@ -1899,7 +1983,18 @@ def remoteExpressionBuilder(Species,Array_type,dabg_p,expression_threshold,
             counts_expr_dir = string.replace(expr_input_dir,'exp.','counts.')
             if 'counts.' not in counts_expr_dir: counts_expr_dir = 'counts.'+counts_expr_dir ### Occurs if 'exp.' not in the filename
             count_statistics_db, count_statistics_headers = calculate_expression_measures(counts_expr_dir,expr_group_dir,experiment_name,comp_group_dir,probeset_db,annotate_db)
-        
+            if count_statistics_headers==None:
+                ### Indicates that the Kallisto expressio file should be used instead of the steady-state RPKM file
+                expr_input_dir = string.replace(expr_input_dir,'-steady-state.txt','-Kallisto.txt')
+                expr_group_dir = string.replace(expr_group_dir,'.txt','-Kallisto.txt')
+                array_type = "3'array"; arrayCode=0; vendor='Ensembl'
+                experiment_name += '-Kallisto'
+                fl.setKallistoFile(expr_input_dir)
+                annotate_db = importGeneAnnotations(species)
+                conventional_array_db = BuildAffymetrixAssociations.getEnsemblAnnotationsFromGOElite(species)
+                probeset_db={}
+                original_platform = 'RNASeq'
+
         calculate_expression_measures(expr_input_dir,expr_group_dir,experiment_name,comp_group_dir,probeset_db,annotate_db)
         buildCriterion(GE_fold_cutoffs, p_cutoff, ptype_to_use, root_dir+'/ExpressionOutput/','summary') ###Outputs a summary of the dataset and all comparisons to ExpressionOutput/summary.txt
         #except Exception: null=[]
@@ -1933,9 +2028,10 @@ def remoteExpressionBuilder(Species,Array_type,dabg_p,expression_threshold,
         print "...check these file names before running again."
         inp = sys.stdin.readline(); sys.exit()
     altanalyze_files = unique.unique(altanalyze_files) ###currently not used, since declaring altanalyze_files a global is problematic (not available from ExonArray... could add though)
-    if array_type != "3'array" and perform_alt_analysis != 'expression':
+
+    if (array_type != "3'array" and perform_alt_analysis != 'expression') or original_platform == 'RNASeq':
         from stats_scripts import FilterDabg; reload(FilterDabg)
-        altanalyze_output = FilterDabg.remoteRun(fl,species,array_type,expression_threshold,filter_method,dabg_p,expression_data_format,altanalyze_files,avg_all_for_ss)
+        altanalyze_output = FilterDabg.remoteRun(fl,species,original_platform,expression_threshold,filter_method,dabg_p,expression_data_format,altanalyze_files,avg_all_for_ss)
         return 'continue',altanalyze_output
     else:
         end_time = time.time(); time_diff = int(end_time-start_time)
@@ -2401,7 +2497,6 @@ def calculateNormalizedIntensities(root_dir, species, array_type, avg_all_for_SS
 
 def compareRawJunctionExpression(root_dir,platform,species,critical_exon_db,expFile,min_events=0,med_events=0):
     expFile = exportSorted(expFile, 0) ### Sort the expression file
-    print expFile
     from  scipy import stats
     exported=[]
     retained_introns=[]
@@ -2595,7 +2690,10 @@ def compareRawJunctionExpression(root_dir,platform,species,critical_exon_db,expF
                                         print incl_exp
                                         print excl_exp;sys.exit()"""
                                 #if 'ENSMUSG00000009350:E14.2_87617106-E15.1' in incl: print feature_exp_db[incl]
-                                altexons = unique.unique(critical_junction_pair_db[incl,excl])
+                                try:
+                                    altexons = unique.unique(critical_junction_pair_db[incl,excl])
+                                except:
+                                    altexons=[]
                                 altexons = string.join(altexons,'|')
                                 if num_excl_events > num_incl_events:
                                     #print max_ratio, '\t',gene
@@ -3074,14 +3172,19 @@ def unbiasedComparisonSpliceProfiles(root_dir,species,platform,expFile=None,min_
     else: avg_all_for_SS = 'no'
     agglomerate_inclusion_probesets = 'no'
     probeset_type = 'core'
-    from build_scripts import JunctionArray; import AltAnalyze
+    try:from build_scripts import JunctionArray
+    except:
+        try: import JunctionArray
+        except: pass
+    try: import AltAnalyze
+    except: pass
     buildFromDeNovoJunctionsOnly=True
     if buildFromDeNovoJunctionsOnly and platform=='RNASeq':
         alt_junction_db={}
     else:
         exon_db, constitutive_probeset_db = AltAnalyze.importSplicingAnnotations(platform,species,probeset_type,avg_all_for_SS,root_dir)
         alt_junction_db,critical_exon_db,exon_dbase,exon_inclusion_db,exon_db = JunctionArray.getPutativeSpliceEvents(species,platform,exon_db,agglomerate_inclusion_probesets,root_dir)
-    print 'Number of Genes with Examined Splice Events:',len(alt_junction_db)
+    #print 'Number of Genes with Examined Splice Events:',len(alt_junction_db)
     
     if platform == 'junction':
         global probeset_junction_db; probeset_junction_db={}
@@ -3325,7 +3428,7 @@ def AllGroupsNIComparison(root_dir, species, array_type):
 def createExpressionSQLdb(species,platform,expFile):
     """ Store junction/exon RPKMs or probesets expression in a SQL database"""
     start=time.time()
-    import SQLInterface
+    from import_scripts import SQLInterface
     DBname = 'FeatureExpression'
     schema_text ='''-- Schema for species specific AltAnalyze junction/exon expression data.
 

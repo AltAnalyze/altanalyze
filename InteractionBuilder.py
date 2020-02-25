@@ -91,10 +91,12 @@ def importInteractionDatabases(interactionDirs):
     for fn in interactionDirs:    #loop through each file in the directory to output results
         x=0; imported=0; stored=0
         file = export.findFilename(fn)
+        count=0
         print "Parsing interactions from:",file
         for line in open(fn,'rU').xreadlines():
-            data,null = string.split(line,'\n')
+            data = cleanUpLine(line)
             t = string.split(data,'\t')
+            count+=1
             if x==0: x=1
             #elif 'PAZAR' in data or 'Amadeus' in data:x+=0
             else:
@@ -126,6 +128,7 @@ def importInteractionDatabases(interactionDirs):
                             except Exception: None
                     except Exception:
                         proceed = False
+
                 if proceed: ### If the interaction data conformed to one of the two above types (typically two valid interacting gene IDs)
                     if (len(ens_ls1)>0 and len(ens_ls2)>0):
                         secondary_proceed = True
@@ -216,7 +219,7 @@ def importInteractionDatabases(interactionDirs):
     ### Evaluate the most promiscous interactors (e.g., UBC)
     remove_list=[]
     for ID in interaction_db:
-        if len(interaction_db[ID])>2000:
+        if len(interaction_db[ID])>20000:
             remove_list.append(ID)
             #print len(interaction_db[ID]),ensembl_symbol_db[ID]
     for ID in remove_list:
@@ -260,9 +263,11 @@ def importqueryResults(species,dir_file,id_db):
         
     if len(id_db)==0: ### Otherwise, already provided gene IDs to query
         translated=0
+        count=0
         try:
             x=0
             for line in fileRead:
+                count+=1
                 try:
                     data = cleanUpLine(line)
                     t = string.split(data,'\t')
@@ -361,6 +366,7 @@ def associateQueryGenesWithInteractions(query_db,query_interactions,dir_file):
     primary=0
     secondary=0
     terciary=0
+
     for ensemblGene in query_db:
         if ensemblGene in interaction_db:
             for interacting_ensembl in interaction_db[ensemblGene]:
@@ -807,7 +813,36 @@ def getGeneIDs(Genes):
                     except Exception: input_IDs[i] = i ### Currently not dealt with
     return input_IDs
 
+def remoteBuildNetworks(species, outputDir, interactions=['WikiPathways','KEGG','TFTargets']):
+    """ Attempts to output regulatory/interaction networks from a directory of input files """
+    
+    directory = 'gene-mapp'
+    interactionDirs=[]
+    obligatorySet=[] ### Always include interactions from these if associated with any input ID period
+    secondarySet=[]
+    inputType = 'IDs'
+    degrees = 'direct'
+                
+    for i in interactions:
+        fn = filepath('AltDatabase/goelite/'+species+'/gene-interactions/Ensembl-'+i+'.txt')
+        interactionDirs.append(fn)
+
+    pdfs=[]
+    dir_list = read_directory(outputDir)
+    for file in dir_list:
+        if 'GE.' in file:
+            input_file_dir = outputDir+'/'+file
+            try:
+                output_filename = buildInteractions(species,degrees,inputType,input_file_dir,outputDir,interactionDirs,
+                                  directory=outputDir,expressionFile=input_file_dir, IncludeExpIDs=True)
+                try: pdfs.append(output_filename[:-4]+'.pdf')
+                except: pass
+            except: pass
+    return pdfs
+        
 if __name__ == '__main__':
+    remoteBuildNetworks('Mm', '/Users/saljh8/Desktop/DemoData/cellHarmony/Mouse_BoneMarrow/inputFile/cellHarmony/DifferentialExpression_Fold_2.0_adjp_0.05')
+    sys.exit()
     Species = 'Hs'
     Degrees = 2
     inputType = 'IDs'

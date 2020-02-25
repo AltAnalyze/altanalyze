@@ -196,9 +196,14 @@ def importGeneData(species_code,mod):
         t = string.split(data,'\t')
         if x == 0: x = 1
         else:
-            gene = t[0]; symbol = t[1]; name = t[2]
-            s = GeneAnnotations(gene,symbol,name,system_type)
-            gene_annotations[gene] = s
+            try:	
+                gene = t[0]; symbol = t[1]; name = t[2]	
+            except:	
+                gene = t[0]; symbol = t[0]; name = t[0]	
+            else:	
+                s = GeneAnnotations(gene, symbol, name, system_type)	
+                gene_annotations[gene] = s	
+
     if export_status == 'export':
         export_dir = database_dir+'/'+species_code+'/uid-gene/'+mod+'-Symbol'+'.txt'
         data = export.ExportFile(export_dir)
@@ -1349,7 +1354,9 @@ class GeneIDInfo:
         except Exception: null=[]
     def GeneID(self): return str(self.geneID)
     def System(self): return str(self.system_name)
-    def Pathway(self): return str(self.pathway)
+    def Pathway(self):
+        try: return str(self.pathway)
+        except Exception: return 'invalid'
     def setGraphID(self,graphID): self.graphID = graphID
     def setGroupID(self,groupid): self.groupid = groupid
     def GraphID(self): return self.graphID
@@ -1396,7 +1403,8 @@ def exportWikiPathwayData(species_name,pathway_db,type):
         values +=[wpd.Uniprot(), wpd.Unigene(), wpd.Refseq(), wpd.MOD(), wpd.Pubchem(), wpd.CAS(), wpd.Chebi()]
         values = string.join(values,'\t')
         values = string.replace(values,'\n','') ###Included by mistake
-        export_data.write(values+'\n')
+        try: export_data.write(values+'\n')
+        except Exception: pass
     export_data.close()
     #print 'WikiPathways data exported to:',export_dir
     
@@ -1444,7 +1452,9 @@ def convertAllGPML(specific_species,all_species):
             except Exception: null=[]
             
             ### Download all species GPML from .zip
-            url = 'http://wikipathways.org//wpi/cache/wikipathways_'+species+'_Curation-AnalysisCollection__gpml.zip'
+            #url = 'http://wikipathways.org//wpi/cache/wikipathways_'+species+'_Curation-AnalysisCollection__gpml.zip'
+            url = 'http://data.wikipathways.org/20190410/gpml/wikipathways-20190410-gpml-'+species+'.zip'
+            print url
             fln,status = update.download(url,'GPML/','')
             
             if 'Internet' not in status:
@@ -1583,7 +1593,8 @@ def parseGPML(custom_sets_folder):
         try: wpid = string.split(filename,'_')[-2]
         except Exception: wpid = filename[:-5]
         revision = string.split(filename,'_')[-1][:-5]
-        dom = parse(xml)
+        try: dom = parse(xml)
+        except Except: continue
         tags = dom.getElementsByTagName('Xref')
         data_node_tags = dom.getElementsByTagName('DataNode')
         groups = dom.getElementsByTagName('Group') ### complexes
@@ -1639,13 +1650,17 @@ def parseGPML(custom_sets_folder):
             graphID = i.getAttribute("GraphId") ### WikiPathways graph ID
             groupID = i.getAttribute('GroupRef')### Group node ID
             #graph_node_data.append([graphID,groupID,label,type])
-            gi = GeneIDInfo(str(system_name),str(id),pathway_name)
-            gi.setGroupID(str(groupID)) ### Include internal graph IDs for determining edges
-            gi.setGraphID(graphID)
-            gi.setLabel(label)
-            if len(id)>0 or 'Tissue' in pathway_name: ### Applies to the Lineage Profiler pathway which doesn't have IDs
-                gene_data.append(gi)
-                pathway_gene_data.append(gi)
+            try:
+                gi = GeneIDInfo(str(system_name),str(id),pathway_name)
+                gi.setGroupID(str(groupID)) ### Include internal graph IDs for determining edges
+                gi.setGraphID(graphID)
+                gi.setLabel(label)
+                if len(id)>0 or 'Tissue' in pathway_name: ### Applies to the Lineage Profiler pathway which doesn't have IDs
+                    gene_data.append(gi)
+                    pathway_gene_data.append(gi)
+            except:  
+                #Can occur as  - UnicodeEncodeError: 'ascii' codec can't encode character u'\xa0' in position 15: ordinal not in range(128)
+                pass
         wpd=WikiPathwaysData(pathway_name,wpid,revision,organism,pathway_gene_data)
         pathway_db[wpid]=wpd
         interaction_data = getInteractions(complexes_data,edge_data,wpd)
@@ -1962,7 +1977,11 @@ if __name__ == '__main__':
     species_code = 'Hs'; mod = 'Ensembl'; gotype='nested'
     filedir = 'C:/Documents and Settings/Nathan Salomonis/My Documents/GO-Elite_120beta/Databases/EnsMart56Plus/Ce/gene/EntrezGene.txt'
     system = 'Macaroni'
-    
+    gene_annotations = importGeneData('Hs','EntrezGene')
+    for i in gene_annotations:
+        print i, gene_annotations[i].Symbol(); break
+    print len(gene_annotations)
+    sys.exit()
     import GO_Elite
     system_codes,source_types,mod_types = GO_Elite.getSourceData()
     #custom_sets_folder = '/test'

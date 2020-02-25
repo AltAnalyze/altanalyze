@@ -64,47 +64,50 @@ def runICGStest(testType = "complete",inputData = "BAM"):
         SamplesDiffering = "4"
         excludeCellCycle = "conservative"
         restrictBy = "None"
-        input_path = unique.filepath(os.getcwd()+"/tests/demo_data/"+inputDataType+"/input/BoneMarrow-scRNASeq.txt")
+        input_path = unique.filepath("AltDatabase/demo_data/"+inputDataType+"/input/BoneMarrow-scRNASeq.txt")
         expname = "BoneMarrow-scRNASeq"
         expdir = "--expdir"
         removeOutliers = "no"
     elif inputData == "BAM":
-        if 'Hs' not in species_names:
-            return 'WARNING!!! Species Hs database not installed.'
-        species = "Hs"
+        if 'Mm' not in species_names:
+            return 'WARNING!!! Species Mm database not installed.'
+        species = "Mm"
         inputDataType = inputData
         SamplesDiffering = "3"
         excludeCellCycle = "no"
         restrictBy = "None"
         expdir = "--bedDir"
         expname = "test"
-        input_path = unique.filepath(os.getcwd()+"/tests/demo_data/"+inputDataType+"/input")
+        rho = "0.6"
+        input_path = unique.filepath("AltDatabase/demo_data/"+inputDataType+"/input")
     elif inputData == 'FASTQ':
-        if 'Hs' not in species_names:
-            return 'WARNING!!! Species Hs database not installed.'
-        species = "Hs"
+        if 'Mm' not in species_names:
+            return 'WARNING!!! Species Mm database not installed.'
+        species = "Mm"
         inputDataType = inputData
         SamplesDiffering = "3"
         excludeCellCycle = "no"
         restrictBy = "None"
+        rho = "0.6"
         expdir = "--fastq_dir"
         expname = "test"
-        input_path = unique.filepath(os.getcwd()+"/tests/demo_data/"+inputDataType+"/input")
-        custom_FASTA_path = unique.filepath(os.getcwd()+"/tests/demo_data/FASTA/Homo_sapiens.GRCh37.72.cdna.all.filtered.fa")
+        input_path = unique.filepath("AltDatabase/demo_data/"+inputDataType+"/input")
+        custom_FASTA_path = unique.filepath("AltDatabase/demo_data/FASTA/Homo_sapiens.GRCh37.72.cdna.all.filtered.fa")
         additional = ["--runKallisto","True","--customFASTA",custom_FASTA_path]
+        additional = []
     elif inputData == '10X':
         if 'Mm' not in species_names:
-            return 'WARNING!!! Species Hs database not installed.'
+            return 'WARNING!!! Species Mm database not installed.'
         species = "Mm"
         inputDataType = inputData
         SamplesDiffering = "4"
         rho = "0.3"
-        excludeCellCycle = "no"
+        excludeCellCycle = "conservative"
         removeOutliers = "yes"
         restrictBy = "protein_coding"
         expdir = "--ChromiumSparseMatrix"
         expname = "test"
-        input_path = unique.filepath(os.getcwd()+"/tests/demo_data/10X/input/mm10/matrix.mtx")
+        input_path = unique.filepath("AltDatabase/demo_data/10X/input/mm10/matrix.mtx")
         
     if testType=="complete":
         cluster_method = "hopach"
@@ -112,8 +115,8 @@ def runICGStest(testType = "complete",inputData = "BAM"):
         ### Optionally, peed up the analysis by restricting to genes correlated to these guides
         genes = "Gfi1 Irf8 Vwf Mmp9"
         
-    outputPath = unique.filepath(os.getcwd()+"/tests/demo_data/"+inputDataType+"/output/")
-    input_root_dir = unique.filepath(os.getcwd()+"/tests/demo_data/"+inputDataType+"/input/")
+    outputPath = unique.filepath("AltDatabase/demo_data/"+inputDataType+"/output/")
+    input_root_dir = unique.filepath("AltDatabase/demo_data/"+inputDataType+"/input/")
 
     ### Create the output directory path if not created
     try: os.mkdir(outputPath)

@@ -16,10 +16,13 @@
 #OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE 
 #SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-#import matplotlib
-#matplotlib.use('GTKAgg')
+import platform
+useDefaultBackend=False
+if platform.system()=='Darwin':
+    if platform.mac_ver()[0] == '10.14.6':
+        useDefaultBackend=True
 
-import sys,string,os
+import sys,string,os,copy
 sys.path.insert(1, os.path.join(sys.path[0], '..')) ### import parent dir dependencies
 
 command_args = string.join(sys.argv,' ')
@@ -37,50 +40,108 @@ try:
         import matplotlib
         if commandLine and 'linux' in sys.platform:
             ### TkAgg doesn't work when AltAnalyze is run remotely (ssh or sh script)
-            try: matplotlib.use('Agg')
+            try: matplotlib.use('Agg');
             except Exception: pass
-            try: matplotlib.rcParams['backend'] = 'Agg'
+            try:
+                matplotlib.rcParams['backend'] = 'Agg'
             except Exception: pass
         else:
-            try: matplotlib.use('TkAgg')
+            try:
+                if useDefaultBackend == False:
+                    import matplotlib.backends.backend_tkagg
+                    matplotlib.use('TkAgg')
             except Exception: pass
-            try: matplotlib.rcParams['backend'] = 'TkAgg'
-            except Exception: pass
+            if useDefaultBackend == False: 
+                try: matplotlib.rcParams['backend'] = 'TkAgg'
+                except Exception: pass
         try:
             import matplotlib.pyplot as pylab
             import matplotlib.colors as mc
             import matplotlib.mlab as mlab
             import matplotlib.ticker as tic
             from matplotlib.patches import Circle
+            import mpl_toolkits
+            from mpl_toolkits import mplot3d
             from mpl_toolkits.mplot3d import Axes3D
+            try: from matplotlib.cbook import _string_to_bool
+            except: pass
             matplotlib.rcParams['axes.linewidth'] = 0.5
             matplotlib.rcParams['pdf.fonttype'] = 42
             matplotlib.rcParams['font.family'] = 'sans-serif'
             matplotlib.rcParams['font.sans-serif'] = 'Arial'
+            matplotlib.rcParams['figure.facecolor'] = 'white' ### Added in 2.1.2
         except Exception:
             print traceback.format_exc()
             print 'Matplotlib support not enabled'
         import scipy
         try: from scipy.sparse.csgraph import _validation
         except Exception: pass
-        from scipy.linalg import svd
-        import scipy.cluster.hierarchy as sch
-        import scipy.spatial.distance as dist
-        try: import numpy; np = numpy
+        try: from scipy import stats
+        except: pass
+        try:
+            from scipy.linalg import svd
+            import scipy.special._ufuncs_cxx
+            from scipy.spatial import _voronoi
+            from scipy.spatial import _spherical_voronoi
+            from scipy.spatial import qhull
+            import scipy._lib.messagestream
         except Exception:
+            pass
+        import scipy.cluster.hierarchy as sch
+        import scipy.spatial.distance as dist   
+        #import scipy.interpolate.interpnd
+        #from scipy import optimize
+        try: import numpy; np = numpy
+        except:
             print 'Numpy import error...'
             print traceback.format_exc()
+        ### The below is used for binary freeze dependency identification
+        if 'darwin' in sys.platform:
+            ### The below is used for binary freeze dependency identification
+            try: import umap
+            except: pass
+        try:
+            from cairo import ImageSurface
+        except: pass
         try:
             import igraph.vendor.texttable
         except ImportError: pass
         try:
             from sklearn.decomposition import PCA, FastICA
         except Exception: pass
+        
+        try: from sklearn.neighbors import quad_tree ### supported in sklearn>18.2
+        except: pass
+        try: import sklearn.utils.sparsetools._graph_validation
+        except: pass
+        try: import sklearn.utils.weight_vector
+        except: pass
+        from sklearn.neighbors import *
+        from sklearn.manifold.t_sne import *
+        from sklearn.tree import *; from sklearn.tree import _utils
+        from sklearn.manifold.t_sne import _utils
+        from sklearn.manifold import TSNE
+        from sklearn.neighbors import NearestNeighbors
+        import sklearn.linear_model.sgd_fast
+        import sklearn.utils.lgamma
+        try: import scipy.special.cython_special
+        except: pass
+        import sklearn.neighbors.typedefs
+        import sklearn.neighbors.ball_tree
+        try:
+            import numba
+            import numba.config
+            import llvmlite; from llvmlite import binding; from llvmlite.binding import *
+            from llvmlite.binding import ffi; from llvmlite.binding import dylib
+        except:
+            pass
         #pylab.ion() # closes Tk window after show - could be nice to include
 except Exception:
     print traceback.format_exc()
     pass
 
+try: import numpy
+except: pass
 import time
 import unique
 from stats_scripts import statistics
@@ -123,7 +184,8 @@ def getColorRange(x):
         return vmax,vmin
     
 def heatmap(x, row_header, column_header, row_method, column_method, row_metric, column_metric, color_gradient,
-            dataset_name, display=False, contrast=None, allowAxisCompression=True,Normalize=True,PriorColumnClusters=None, PriorRowClusters=None):
+            dataset_name, display=False, contrast=None, allowAxisCompression=True,Normalize=True,
+            PriorColumnClusters=None, PriorRowClusters=None):
     print "Performing hieararchical clustering using %s for columns and %s for rows" % (column_metric,row_metric)
     show_color_bars = True ### Currently, the color bars don't exactly reflect the dendrogram colors
     try: ExportCorreleationMatrix = exportCorreleationMatrix
@@ -133,7 +195,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
     except Exception: None
     if display == False:
         pylab.figure() ### Add this to avoid a Tkinter bug after running MarkerFinder (not sure why it is needed) - creates a second empty window when display == True
-                
+        
     if row_method == 'hopach' or column_method == 'hopach':
         ### Test R and hopach
         """
@@ -246,6 +308,10 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
         cmap=pylab.cm.coolwarm
     if color_gradient == 'Greys':
         cmap=pylab.cm.Greys
+    if color_gradient == 'yellow_orange_red':
+        cmap=pylab.cm.YlOrRd
+    if color_gradient == 'Spectral':
+        cmap = pylab.cm.Spectral_r
         
     vmin=x.min()
     vmax=x.max()
@@ -254,6 +320,10 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
         vmin = vmax*-1
     elif 'Clustering-Zscores-' in dataset_name:
         vmin = vmax*-1
+    elif vmin<0 and vmax>0 and Normalize==False:
+        vmin = vmax*-1
+    #vmin = vmax*-1
+    #print vmax, vmin
     default_window_hight = 8.5
     default_window_width = 12
     if len(column_header)>80:
@@ -268,8 +338,13 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
     
     #print vmin/scaling_factor
     norm = matplotlib.colors.Normalize(vmin/scaling_factor, vmax/scaling_factor) ### adjust the max and min to scale these colors by 2.5 (1 scales to the highest change)
-    fig = pylab.figure(figsize=(default_window_width,default_window_hight)) ### could use m,n to scale here
+    #fig = pylab.figure(figsize=(default_window_width,default_window_hight)) ### could use m,n to scale here
+    fig = pylab.figure() ### could use m,n to scale here - figsize=(12,10)
+    fig.set_figwidth(12)
+    fig.set_figheight(7)
+    fig.patch.set_facecolor('white')
     pylab.rcParams['font.size'] = 7.5
+    #pylab.rcParams['axes.facecolor'] = 'white' ### Added in 2.1.2
 
     if show_color_bars == False:
         color_bar_w = 0.000001 ### Invisible but not gone (otherwise an error persists)
@@ -285,6 +360,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
     try:
         if EliteGeneSets != [''] and EliteGeneSets !=[]:
             matrix_horiz_pos = 0.27
+            
         elif skipClustering:
             if len(row_header)<100:
                 matrix_horiz_pos = 0.20
@@ -292,9 +368,14 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
                 matrix_horiz_pos = 0.27
         else:
             matrix_horiz_pos = 0.14
+
     except Exception:
         matrix_horiz_pos = 0.14
-
+        
+    """ Adjust the position of the heatmap based on the number of columns """
+    if len(column_header)<50:
+        matrix_horiz_pos+=0.1
+        
     ## calculate positions for all elements
     # ax1, placement of dendrogram 1, on the left of the heatmap
     [ax1_x, ax1_y, ax1_w, ax1_h] = [0.05,0.235,matrix_horiz_pos,dg1]   ### The last controls matrix hight, second value controls the position of the matrix relative to the bottom of the view [0.05,0.22,0.2,0.6] 
@@ -308,10 +389,16 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
     width_between_axr_axm = 0.004
     
     # axc, placement of column side colorbar (3rd value controls the width of the matrix!)
-    [axc_x, axc_y, axc_w, axc_h] = [0.4,0.63,0.6,color_bar_w] ### last one controls the hight of the top color bar - 0.015 when showing [0.4,0.63,0.5,color_bar_w]
+    [axc_x, axc_y, axc_w, axc_h] = [0.5,0.63,0.5,color_bar_w] ### last one controls the hight of the top color bar - 0.015 when showing [0.4,0.63,0.5,color_bar_w]
+    """ Adjust the width of the heatmap based on the number of columns """
+    if len(column_header)<50:
+        axc_w = 0.3
+        if len(column_header)<20:
+            axc_w = 0.2
     axc_x = axr_x + axr_w + width_between_axr_axm
     axc_y = ax1_y + ax1_h + height_between_ax1_axc
     height_between_axc_ax2 = 0.004
+
     
     # axm, placement of heatmap for the data matrix
     [axm_x, axm_y, axm_w, axm_h] = [0.4,0.9,2.5,0.5] #[0.4,0.9,2.5,0.5]
@@ -436,7 +523,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             xt = x
             ind2 = ['NA']*len(column_header) ### Used for exporting the flat cluster data
             ind1 = ['NA']*len(row_header) ### Used for exporting the flat cluster data
-            
+
     if row_method != None:
         idx1 = Z1['leaves'] ### apply the clustering for the gene-dendrograms to the actual matrix data
         prior_xt = xt
@@ -487,12 +574,13 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             column_fontsize = 10
         if len(justShowTheseIDs)>0:
             additional_symbols=[]
-            import gene_associations, OBO_import
+            import gene_associations
             try:
                 gene_to_symbol = gene_associations.getGeneToUid(species,('hide','Ensembl-Symbol'))
-                #symbol_to_gene = OBO_import.swapKeyValues(gene_to_symbol)
             except Exception: gene_to_symbol={}; symbol_to_gene={}
-    except Exception: pass
+        JustShowTheseIDs = copy.deepcopy(justShowTheseIDs)
+    except Exception:
+        JustShowTheseIDs=[]
 
     # Add text
     new_row_header=[]
@@ -517,7 +605,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
         time_stamp = timestamp() ### Don't overwrite the previous version
         filename = string.replace(filename,'hierarchical',time_stamp)
 
-    elite_dir, cdt_file, SystemCode = exportFlatClusterData(root_dir + filename, root_dir, dataset_name, new_row_header,new_column_header,xt,ind1,ind2,vmax,display)
+    elite_dir, cdt_file, markers, SystemCode = exportFlatClusterData(root_dir + filename, root_dir, dataset_name, new_row_header,new_column_header,xt,ind1,ind2,vmax,display)
 
     def ViewPNG(png_file_dir):
         if os.name == 'nt':
@@ -529,7 +617,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
     try:
         try:
             temp1=len(justShowTheseIDs)
-            if 'monocle' in justShowTheseIDs and ('driver' not in justShowTheseIDs and 'guide' not in justShowTheseIDs):
+            if 'monocle' in justShowTheseIDs and ('guide' not in justShowTheseIDs):
                 import R_interface
                 print 'Running Monocle through R (be patient, this can take 20 minutes+)'
                 R_interface.performMonocleAnalysisFromHeatmap(species,cdt_file[:-3]+'txt',cdt_file[:-3]+'txt')
@@ -545,7 +633,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
     cluster_elite_terms={}; ge_fontsize=11.5; top_genes=[]; proceed=True
     try:
         try:
-            if 'driver' in justShowTheseIDs or 'guide' in justShowTheseIDs: proceed = False
+            if 'guide' in justShowTheseIDs: proceed = False
         except Exception: pass
         if proceed:
             try:
@@ -566,11 +654,11 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             #print traceback.format_exc()
             pass
     try:
-        if len(justShowTheseIDs)<1 and len(top_genes) > 0 and column_fontsize < 9:
+        if len(justShowTheseIDs)<1 and len(markers) > 0 and column_fontsize < 9: ### substituted top_genes with markers
             column_fontsize = 10
         if len(justShowTheseIDs)<1:
             additional_symbols=[]
-            import gene_associations, OBO_import
+            import gene_associations; from import_scripts import OBO_import
             try:
                 gene_to_symbol = gene_associations.getGeneToUid(species,('hide','Ensembl-Symbol'))
                 #symbol_to_gene = OBO_import.swapKeyValues(gene_to_symbol)
@@ -593,7 +681,8 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
     interval = int(float(string.split(str(len(row_header)/35.0),'.')[0]))+1 ### for enrichment term labels with over 100 genes
     increment=interval-2
     if len(row_header)<100: increment = interval-1
-    label_pos=-0.03*len(column_header)-.5
+    label_pos=-0.03*len(column_header)-.8
+    alternate=1
     #print label_pos
     try:
         if 'top' in justShowTheseIDs: justShowTheseIDs.remove('top')
@@ -623,15 +712,16 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             increment=0
         #print cluster,i,row_header[idx1[i]]
         color = 'black'
+        
         if row_method != None:
             try:
-                if row_header[idx1[i]] in justShowTheseIDs:
+                if row_header[idx1[i]] in JustShowTheseIDs:
                     if len(row_header)>len(justShowTheseIDs):
                         color = 'red'
                 else: color = 'black'
             except Exception: pass
             if len(row_header)<106: ### Don't visualize gene associations when more than 100 rows
-                if display_label_names == False:
+                if display_label_names == False or 'ticks' in JustShowTheseIDs:
                     if color=='red':
                         axm.text(x.shape[1]-0.5, i-radj, '  '+'-',fontsize=row_fontsize, color=color, picker=True)
                     else:
@@ -642,11 +732,16 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             new_index = idx1[i]
         else:
             try:
-                if row_header[i] in justShowTheseIDs: color = 'red'
+                feature_id = row_header[i]
+                if ':' in feature_id:
+                    feature_id = string.split(feature_id,':')[1]
+                    if feature_id[-1]==' ': feature_id = feature_id[:-1]
+                if feature_id in JustShowTheseIDs:
+                    color = 'red'
                 else: color = 'black'
             except Exception: pass
             if len(row_header)<106: ### Don't visualize gene associations when more than 100 rows
-                if display_label_names == False:
+                if display_label_names == False or 'ticks' in JustShowTheseIDs:
                     if color=='red':
                         axm.text(x.shape[1]-0.5, i-radj, '  '+'-',fontsize=row_fontsize, color=color, picker=True)
                     else:
@@ -671,6 +766,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             if ':' in feature_id:
                 if 'ENS' != feature_id[:3] or 'G0000' in feature_id:
                     feature_id = string.split(feature_id,':')[1]
+                    if feature_id[-1]==' ': feature_id = feature_id[:-1]
                 else:
                     feature_id = string.split(feature_id,':')[0]
                     try: feature_id = gene_to_symbol[feature_id][0]
@@ -678,24 +774,29 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             if (' ' in feature_id and ('ENS' in feature_id or 'G0000' in feature_id)):
                 feature_id = string.split(feature_id,' ')[1]
             try:
-                if feature_id in justShowTheseIDs or original_feature_id in justShowTheseIDs: color = 'red'
+                if feature_id in JustShowTheseIDs or original_feature_id in JustShowTheseIDs: color = 'red'
                 else: color = 'black'
             except Exception: pass
             try:
-                if feature_id in justShowTheseIDs or (len(justShowTheseIDs)<1 and feature_id in top_genes) or original_feature_id in justShowTheseIDs:
+                if feature_id in justShowTheseIDs or (len(justShowTheseIDs)<1 and feature_id in markers) or original_feature_id in justShowTheseIDs: ### substitutes top_genes with markers
                     if original_feature_id in justShowTheseIDs:
                         feature_id = original_feature_id
-                    if display_label_names:
-                        axm.text(x.shape[1]-0.5, i-radj, '  '+feature_id,fontsize=column_fontsize, color=color,picker=True) ### When not clustering rows
+                    if display_label_names and 'ticks' not in justShowTheseIDs:
+                        if alternate==1: buffer=1.2; alternate=2
+                        elif alternate==2: buffer=2.4; alternate=3
+                        elif alternate==3: buffer=3.6; alternate=4
+                        elif alternate==4: buffer=0; alternate=1
+                        axm.text(x.shape[1]-0.4+buffer, i-radj, feature_id,fontsize=column_fontsize, color=color,picker=True) ### When not clustering rows
                     else:
                         axm.text(x.shape[1]-0.5, i-radj, '  '+"-",fontsize=column_fontsize, color=color,picker=True) ### When not clustering rows
                 elif ' ' in row_header[new_index]:
                     symbol = string.split(row_header[new_index], ' ')[-1]
-                    if symbol in justShowTheseIDs:
-                        if display_label_names:
-                            axm.text(x.shape[1]-0.5, i-radj, '  '+row_header[new_index],fontsize=column_fontsize, color=color,picker=True)
-                        else:
-                            axm.text(x.shape[1]-0.5, i-radj, '  '+"-",fontsize=column_fontsize, color=color,picker=True)
+                    if len(symbol)>0:
+                        if symbol in justShowTheseIDs:
+                            if display_label_names and 'ticks' not in justShowTheseIDs:
+                                axm.text(x.shape[1]-0.5, i-radj, '  '+row_header[new_index],fontsize=column_fontsize, color=color,picker=True)
+                            else:
+                                axm.text(x.shape[1]-0.5, i-radj, '  '+"-",fontsize=column_fontsize, color=color,picker=True)
             except Exception: pass
                     
         if cluster in cluster_elite_terms or 'cluster-'+cluster in cluster_elite_terms:
@@ -823,11 +924,15 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             adji = i-0.25 ### adjust the relative position of the column label horizontally
         if len(column_header)>35:
             adji = i-0.3 ### adjust the relative position of the column label horizontally
+        if len(column_header)>200:
+            column_fontsize = 2
         if column_method != None:
-            axm.text(adji, cadj, ''+column_header[idx2[i]], rotation=270, verticalalignment="top",fontsize=column_fontsize) # rotation could also be degrees
+            if len(column_header)<300: ### Don't show the headers when too many values exist
+                axm.text(adji, cadj, ''+column_header[idx2[i]], rotation=270, verticalalignment="top",fontsize=column_fontsize) # rotation could also be degrees
             new_column_header.append(column_header[idx2[i]])
         else: ### When not clustering columns
-            axm.text(adji, cadj, ''+column_header[i], rotation=270, verticalalignment="top",fontsize=column_fontsize)
+            if len(column_header)<300: ### Don't show the headers when too many values exist
+                axm.text(adji, cadj, ''+column_header[i], rotation=270, verticalalignment="top",fontsize=column_fontsize)
             new_column_header.append(column_header[i])
 
     # Plot colside colors
@@ -841,15 +946,19 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
         axc = fig.add_axes([axc_x, axc_y, axc_w, axc_h])  # axes for column side colorbar
         cmap_c = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF', '#CCCCE0','#000066','#FFFF00', '#FF1493'])
         if use_default_colors:
-            cmap_c = pylab.cm.gist_rainbow
+            cmap_c = pylab.cm.nipy_spectral
         else:
             #cmap_c = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF','#FFFF00', '#FF1493'])
             if len(unique.unique(ind2))==2: ### cmap_c is too few colors
                 cmap_c = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF'])
                 #cmap_c = matplotlib.colors.ListedColormap(['#7CFC00','k'])
                 cmap_c = matplotlib.colors.ListedColormap(['w', 'k'])
+            elif len(unique.unique(ind2))>0: ### cmap_c is too few colors
+                cmap_c = pylab.cm.nipy_spectral
+            """
             elif len(unique.unique(ind2))==3: ### cmap_c is too few colors
                 cmap_c = matplotlib.colors.ListedColormap(['#88BF47', '#3D3181', '#EE2C3C'])
+                #cmap_c = matplotlib.colors.ListedColormap(['r', 'y', 'b'])
             elif len(unique.unique(ind2))==4: ### cmap_c is too few colors
                 cmap_c = matplotlib.colors.ListedColormap(['#88BF47', '#3D3181', '#EE2C3C','#FEBC18'])
                 #cmap_c = matplotlib.colors.ListedColormap(['k', 'w', 'w', 'w'])
@@ -857,6 +966,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
                 cmap_c = matplotlib.colors.ListedColormap(['#88BF47', '#63C6BB', '#3D3181', '#FEBC18', '#EE2C3C'])
             elif len(unique.unique(ind2))==6: ### cmap_c is too few colors
                 cmap_c = matplotlib.colors.ListedColormap(['#88BF47', '#29C3EC', '#3D3181', '#7B4976','#FEBC18', '#EE2C3C'])
+                #cmap_c = matplotlib.colors.ListedColormap(['black', '#1DA532', '#88BF47','b', 'grey','r'])
                 #cmap_c = matplotlib.colors.ListedColormap(['w', '#0B9B48', 'w', '#5D82C1','#4CB1E4','#71C065'])
                 #cmap_c = matplotlib.colors.ListedColormap(['w', 'w', 'k', 'w','w','w'])
             elif len(unique.unique(ind2))==7: ### cmap_c is too few colors
@@ -864,10 +974,9 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
                 #cmap_c = matplotlib.colors.ListedColormap(['w', 'w', 'w', 'k', 'w','w','w'])
                 #cmap_c = matplotlib.colors.ListedColormap(['w','w', '#0B9B48', 'w', '#5D82C1','#4CB1E4','#71C065'])
             #elif len(unique.unique(ind2))==9:  cmap_c = matplotlib.colors.ListedColormap(['k', 'w', 'w', 'w', 'w', 'w', 'w', 'w', 'w'])
-            elif len(unique.unique(ind2))==11: 
-                cmap_c = matplotlib.colors.ListedColormap(['w', '#DC2342', '#0B9B48', '#FDDF5E', '#E0B724', 'k', '#5D82C1', '#F79020', '#4CB1E4', '#983894', '#71C065'])
-            elif len(unique.unique(ind2))>0: ### cmap_c is too few colors
-                cmap_c = pylab.cm.gist_rainbow
+            #elif len(unique.unique(ind2))==11: 
+            #cmap_c = matplotlib.colors.ListedColormap(['w', '#DC2342', '#0B9B48', '#FDDF5E', '#E0B724', 'k', '#5D82C1', '#F79020', '#4CB1E4', '#983894', '#71C065'])
+            """
     
         dc = numpy.array(ind2, dtype=int)
         dc.shape = (1,len(ind2)) 
@@ -885,23 +994,27 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
                 cmap_c = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF', '#CCCCE0','#000066','#FFFF00', '#FF1493'])
                 #cmap_c = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF','#FFFF00', '#FF1493'])
                 if use_default_colors:
-                    cmap_c = pylab.cm.gist_rainbow
+                    cmap_c = pylab.cm.nipy_spectral
                 else:
                     if len(unique.unique(ind2_clust))==2: ### cmap_c is too few colors
                         #cmap_c = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF'])
                         cmap_c = matplotlib.colors.ListedColormap(['w', 'k'])
+                    elif len(unique.unique(ind2_clust))>0: ### cmap_c is too few colors
+                        cmap_c = pylab.cm.nipy_spectral
+                    """
                     elif len(unique.unique(ind2_clust))==3: ### cmap_c is too few colors
                         cmap_c = matplotlib.colors.ListedColormap(['#88BF47', '#3D3181', '#EE2C3C'])
+                        #cmap_c = matplotlib.colors.ListedColormap(['r', 'y', 'b'])
                     elif len(unique.unique(ind2_clust))==4: ### cmap_c is too few colors
                         cmap_c = matplotlib.colors.ListedColormap(['#88BF47', '#3D3181', '#EE2C3C', '#FEBC18'])
+                        #cmap_c = matplotlib.colors.ListedColormap(['black', '#1DA532', 'b','r'])
                     elif len(unique.unique(ind2_clust))==5: ### cmap_c is too few colors
                         cmap_c = matplotlib.colors.ListedColormap(['#88BF47', '#63C6BB', '#3D3181', '#FEBC18', '#EE2C3C'])
                     elif len(unique.unique(ind2_clust))==6: ### cmap_c is too few colors
                         cmap_c = matplotlib.colors.ListedColormap(['#88BF47', '#29C3EC', '#3D3181', '#7B4976','#FEBC18', '#EE2C3C'])
                     elif len(unique.unique(ind2_clust))==7: ### cmap_c is too few colors
                         cmap_c = matplotlib.colors.ListedColormap(['#88BF47', '#63C6BB', '#29C3EC', '#3D3181', '#7B4976','#FEBC18', '#EE2C3C'])
-                    elif len(unique.unique(ind2_clust))>0: ### cmap_c is too few colors
-                        cmap_c = pylab.cm.gist_rainbow
+                    """
                     dc = numpy.array(ind2_clust, dtype=int)
                     dc.shape = (1,len(ind2_clust)) 
                     im_cd = axcd.matshow(dc, aspect='auto', origin='lower', cmap=cmap_c)
@@ -920,14 +1033,19 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             if len(unique.unique(ind2))==2: ### cmap_c is too few colors
                 #cmap_d = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF'])
                 cmap_d = matplotlib.colors.ListedColormap(['w', 'k'])
+            elif len(unique.unique(ind2))>0: ### cmap_c is too few colors
+                cmap_d = pylab.cm.nipy_spectral
+            """
             elif len(unique.unique(ind2))==3: ### cmap_c is too few colors
                 cmap_d = matplotlib.colors.ListedColormap(['#88BF47', '#3D3181', '#EE2C3C'])
+                #cmap_d = matplotlib.colors.ListedColormap(['r', 'y', 'b'])
             elif len(unique.unique(ind2))==4: ### cmap_c is too few colors
                 cmap_d = matplotlib.colors.ListedColormap(['#88BF47', '#3D3181', '#EE2C3C', '#FEBC18'])
             elif len(unique.unique(ind2))==5: ### cmap_c is too few colors
                 cmap_d = matplotlib.colors.ListedColormap(['#88BF47', '#63C6BB', '#3D3181', '#FEBC18', '#EE2C3C'])
             elif len(unique.unique(ind2))==6: ### cmap_c is too few colors
                 cmap_d = matplotlib.colors.ListedColormap(['#88BF47', '#29C3EC', '#3D3181', '#7B4976','#FEBC18', '#EE2C3C'])
+                #cmap_d = matplotlib.colors.ListedColormap(['black', '#1DA532', '#88BF47','b', 'grey','r'])
                 #cmap_d = matplotlib.colors.ListedColormap(['w', '#0B9B48', 'w', '#5D82C1','#4CB1E4','#71C065'])
                 #cmap_d = matplotlib.colors.ListedColormap(['w', 'w', 'k', 'w', 'w','w','w'])
             elif len(unique.unique(ind2))==7: ### cmap_c is too few colors
@@ -935,11 +1053,10 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
                 #cmap_d = matplotlib.colors.ListedColormap(['w', 'w', 'w', 'k', 'w','w','w'])
                 #cmap_d = matplotlib.colors.ListedColormap(['w','w', '#0B9B48', 'w', '#5D82C1','#4CB1E4','#71C065'])
             #elif len(unique.unique(ind2))==10: cmap_d = matplotlib.colors.ListedColormap(['w', 'w', 'w', 'w', 'w', 'w', 'w', 'w', 'w', 'k'])
-            elif len(unique.unique(ind2))==11:
-                #Eryth Gfi1 Gran HSCP-1 HSCP-2 IG2 MDP Meg Mono Multi-Lin Myelo
-                cmap_d = matplotlib.colors.ListedColormap(['#DC2342', 'k', '#0B9B48', '#FDDF5E', '#E0B724', 'w', '#5D82C1', '#F79020', '#4CB1E4', '#983894', '#71C065'])
-            elif len(unique.unique(ind2))>0: ### cmap_c is too few colors
-                cmap_d = pylab.cm.gist_rainbow
+            #elif len(unique.unique(ind2))==11:
+            #Eryth Gfi1 Gran HSCP-1 HSCP-2 IG2 MDP Meg Mono Multi-Lin Myelo
+            #cmap_d = matplotlib.colors.ListedColormap(['#DC2342', 'k', '#0B9B48', '#FDDF5E', '#E0B724', 'w', '#5D82C1', '#F79020', '#4CB1E4', '#983894', '#71C065'])
+            """
             dc = numpy.array(group_colors, dtype=int)
             dc.shape = (1,len(group_colors)) 
             im_c = axd.matshow(dc, aspect='auto', origin='lower', cmap=cmap_d)
@@ -963,7 +1080,11 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
             #print ind1, len(ind1)
             cmap_r = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF', '#FFFF00', '#FF1493'])
             if len(unique.unique(ind1))>4: ### cmap_r is too few colors
-                cmap_r = pylab.cm.gist_rainbow
+                cmap_r = pylab.cm.nipy_spectral
+                if 'MarkerGenes' in dataset_name:  ### reverse the order of the colors to match the top color bar
+                    cmap_r = pylab.cm.nipy_spectral_r
+            if len(unique.unique(ind1))==2:
+                cmap_r = matplotlib.colors.ListedColormap(['w', 'k'])
             im_r = axr.matshow(dr, aspect='auto', origin='lower', cmap=cmap_r)
             axr.set_xticks([]) ### Hides ticks
             axr.set_yticks([])
@@ -994,7 +1115,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
     fig.text(0.015, 0.970, dataset_name, fontsize = fontsize)
     
     ### Render and save the graphic
-    pylab.savefig(root_dir + filename)
+    pylab.savefig(root_dir + filename,dpi=1000)
     #print 'Exporting:',filename
     filename = filename[:-3]+'png'
     pylab.savefig(root_dir + filename, dpi=100) #,dpi=200
@@ -1021,13 +1142,15 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
         graphic_link.append(['Hierarchical Clustering - AltExonConfirmed',root_dir+filename])
     elif 'AltExon' in filename:
         graphic_link.append(['Hierarchical Clustering - AltExon',root_dir+filename])
+    elif 'alt_junction' in filename:
+        graphic_link.append(['Hierarchical Clustering - Variable Splice-Events',root_dir+filename])
     else:
         graphic_link.append(['Hierarchical Clustering - Significant Genes',root_dir+filename])
     
     if display:
         proceed=True
         try:
-            if 'driver' in justShowTheseIDs or 'guide' in justShowTheseIDs:
+            if 'guide' in justShowTheseIDs:
                 proceed = False
         except Exception: pass
         if proceed:
@@ -1042,6 +1165,7 @@ def heatmap(x, row_header, column_header, row_method, column_method, row_metric,
 def openTreeView(filename):
     import subprocess
     fn = filepath("AltDatabase/TreeView/TreeView.jar")
+    print 'java', "-Xmx500m", '-jar', fn, "-r", filename
     retcode = subprocess.Popen(['java', "-Xmx500m", '-jar', fn, "-r", filename])
 
 def remoteGOElite(elite_dir,SystemCode = None):
@@ -1071,8 +1195,11 @@ def remoteGOElite(elite_dir,SystemCode = None):
             enrichmentAnalysisType = 'ORA'
             #enrichmentAnalysisType = 'URA'
             variables = species,mod,pathway_permutations,filter_method,z_threshold,p_val_threshold,change_threshold,resources_to_analyze,returnPathways,file_dirs,enrichmentAnalysisType,root
-            try: GO_Elite.remoteAnalysis(variables,'non-UI Heatmap')
-            except Exception: 'GO-Elite failed for:',elite_dir
+            try:
+                GO_Elite.remoteAnalysis(variables, 'non-UI Heatmap')
+            except Exception:
+                print 'GO-Elite failed for:', elite_dir
+                print traceback.format_exc()
             if commandLine==False:
                 try: UI.openDirectory(elite_dir+'/GO-Elite_results') 
                 except Exception: None
@@ -1279,11 +1406,16 @@ def exportFlatClusterData(filename, root_dir, dataset_name, new_row_header,new_c
     i=0
     cluster_db={}
     export_lines = []
+    last_cluster=None
+    cluster_top_marker={}
     for row in xt:
         try:
             id = new_row_header[i]
+            new_id = id
             original_id = str(id)
-            if sy == '$En:Sy':
+            if sy == 'Ae' and '--' in id:
+                cluster = 'cluster-' + string.split(id, ':')[0]
+            elif sy == '$En:Sy':
                 cluster = 'cluster-'+string.split(id,':')[0]
             elif sy == 'S' and ':' in id:
                 cluster = 'cluster-'+string.split(id,':')[0]
@@ -1291,17 +1423,26 @@ def exportFlatClusterData(filename, root_dir, dataset_name, new_row_header,new_c
                 cluster = 'cluster-'+string.split(id,':')[0]
             else:
                 cluster = 'c'+str(ind1[i])
+            if ':' in id:
+                new_id = string.split(id,':')[1]
+                if ' ' in new_id:
+                    new_id = string.split(new_id,' ')[0]
+            #if cluster not in cluster_top_marker: ### Display the top marker gene
+            cluster_top_marker[cluster] = new_id
+            last_cluster = cluster
         except Exception:
             pass
     
         try:
             if 'MarkerGenes' in originalFilename:
-                cluster = 'cluster-'+string.split(id,':')[0]
-                id = string.split(id,':')[1]
+                cluster = 'cluster-' + string.split(id, ':')[0]
+                id = string.split(id, ':')[1]
                 if ' ' in id:
-                    id = string.split(id,' ')[0]
-                if 'G000' in id: sy = 'En'
-                else: sy = 'Sy'
+                    id = string.split(id, ' ')[0]
+                if 'G000' in id:
+                    sy = 'En'
+                else:
+                    sy = 'Sy'        
         except Exception: pass
         try: cluster_db[cluster].append(id)
         except Exception: cluster_db[cluster] = [id]
@@ -1316,67 +1457,83 @@ def exportFlatClusterData(filename, root_dir, dataset_name, new_row_header,new_c
         export_text.write(line)
     export_text.close()
 
-
     ### Export GO-Elite input files
     allGenes={}
+    sc=sy
     for cluster in cluster_db:
-        export_elite = export.ExportFile(elite_dir+'/'+cluster+'.txt')
-        if sy==None:
+        export_elite = export.ExportFile(elite_dir + '/' + cluster + '.txt')
+        if sy == None:
             export_elite.write('ID\n')
         else:
             export_elite.write('ID\tSystemCode\n')
         for id in cluster_db[cluster]:
-            try:
-                i1,i2 = string.split(id,' ')
-                if i1==i2: id = i1
-            except Exception: pass  
-            if sy == '$En:Sy':
-                id = string.split(id,':')[1]
-                ids = string.split(id,' ')
-                if 'ENS' in ids[0] or 'G0000' in ids[0]: id = ids[0]
-                else: id = ids[-1]
-                sc = 'En'
-            elif sy == 'Sy' and ':' in id:
-                id = string.split(id,':')[1]
-                ids = string.split(id,' ')
-                sc = 'Sy'
-            elif sy == 'En:Sy':
-                id = string.split(id,' ')[0]
-                sc = 'En'
-            elif sy == 'Ae':
-                l = string.split(id,':')
-                if len(l)==2:
-                    id = string.split(id,':')[0] ### Use the Ensembl
-                if len(l) == 3:
-                    id = string.split(id,':')[1] ### Use the Ensembl
-                sc = 'En'
-                if ' ' in id:
-                    ids = string.split(id,' ')
-                    if 'ENS' in ids[-1] or 'G0000' in ids[-1]: id = ids[-1]
-                    else: id = ids[0]
-            elif sy == 'En' and '&' in id:
-                for i in string.split(id,'&'):
-                    if 'G0000' in i: id = i; sc = 'En'; break
-            elif sy == 'Sy' and 'EFN' in id:
-                sc = 'En'
+            if ' ' in id and ':' not in id:
+                ids = string.split(id, ' ')
+                if ids[0] == ids[1]:
+                    id = ids[0]
             else:
-                sc = sy
-            if sy == 'S':
-                if ':' in id:
-                    id = string.split(id,':')[-1]
+                if sy == '$En:Sy':
+                    id = string.split(id, ':')[1]
+                    ids = string.split(id, ' ')
+                    if 'ENS' in ids[0] or 'G0000' in ids[0]:
+                        id = ids[0]
+                    else:
+                        id = ids[(-1)]
+                    sc = 'En'
+                elif sy == 'Sy' and ':' in id:
+                    id = string.split(id, ':')[1]
+                    ids = string.split(id, ' ')
+                    sc = 'Sy'
+                elif sy == 'En:Sy':
+                    id = string.split(id, ' ')[0]
+                    sc = 'En'
+                elif sy == 'Ae':
+                    if '--' in id:
+                        sc = 'En'
+                        id = string.split(id, ':')[(-1)]
+                    else:
+                        l = string.split(id, ':')
+                        if len(l) == 2:
+                            id = string.split(id, ':')[0]
+                        if len(l) == 3:
+                            id = string.split(id, ':')[1]
+                        sc = 'En'
+                        if ' ' in id:
+                            ids = string.split(id, ' ')
+                            if 'ENS' in ids[(-1)] or 'G0000' in ids[(-1)]:
+                                id = ids[(-1)]
+                            else:
+                                id = ids[0]
+                elif sy == 'En' and '&' in id:
+                    for i in string.split(id, '&'):
+                        if 'G0000' in i:
+                            id = i
+                            sc = 'En'
+                            break
+
+                elif sy == 'Sy' and 'EFN' in id:
+                    sc = 'En'
+                else:
+                    sc = sy
+                if sy == 'S':
+                    if ':' in id:
+                        id = string.split(id, ':')[(-1)]
+                        sc = 'Ae'
+                if '&' in id:
                     sc = 'Ae'
-            if '&' in id:
-                sc = 'Ae'
-            if (len(id)==9 and "SRS" in id) or (len(id)==15 and "TCGA-" in id):
-                sc = 'En'
-            try: export_elite.write(id+'\t'+sc+'\n')
-            except Exception: export_elite.write(id+'\n') ### if no System Code known
-            allGenes[id]=[]
+                if len(id) == 9 and 'SRS' in id or len(id) == 15 and 'TCGA-' in id:
+                    sc = 'En'
+                try:
+                    export_elite.write(id + '\t' + sc + '\n')
+                except Exception:
+                    export_elite.write(id + '\n')
+                else:
+                    allGenes[id] = []
         export_elite.close()
-    
+            
     try:
         if storeGeneSetName != None:
-            if len(storeGeneSetName)>0 and ('driver' not in justShowTheseIDs and 'guide' not in justShowTheseIDs):
+            if len(storeGeneSetName)>0 and ('guide' not in justShowTheseIDs):
                 exportCustomGeneSet(storeGeneSetName,species,allGenes)
                 print 'Exported geneset to "StoredGeneSets"'
     except Exception: pass
@@ -1402,9 +1559,14 @@ def exportFlatClusterData(filename, root_dir, dataset_name, new_row_header,new_c
     cdt_lines.reverse()
     for line in cdt_lines:
         export_cdt.write(line)
+        
+    ### Save the top marker gene IDs
+    markers=[]
+    for cluster in cluster_top_marker:
+        markers.append(cluster_top_marker[cluster])
     
     export_cdt.close()
-    return elite_dir, filename, sc
+    return elite_dir, filename, markers, sc
 
 def exportJTV(cdt_dir, column_header, row_header,vmax=None):
     ### This is a config file for TreeView
@@ -1590,11 +1752,15 @@ def filepath(filename):
     fn = unique.filepath(filename)
     return fn
 
-def remoteImportData(filename,geneFilter=None):
-    matrix, column_header, row_header, dataset_name, group_db = importData(filename,geneFilter=geneFilter)
-    return matrix, column_header, row_header, dataset_name, group_db, priorColumnClusters, priorRowClusters
+def remoteImportData(filename,geneFilter=None,reverseOrder=True):
+    matrix, column_header, row_header, dataset_name, group_db = importData(filename,geneFilter=geneFilter,reverseOrder=reverseOrder)
+    try:
+        return matrix, column_header, row_header, dataset_name, group_db, priorColumnClusters, priorRowClusters
+    except:
+        return matrix, column_header, row_header, dataset_name, group_db, [], []
 
-def importData(filename,Normalize=False,reverseOrder=True,geneFilter=None,zscore=False):
+def importData(filename,Normalize=False,reverseOrder=True,geneFilter=None,
+               zscore=False,forceClusters=False):
     
     global priorColumnClusters 
     global priorRowClusters
@@ -1624,17 +1790,25 @@ def importData(filename,Normalize=False,reverseOrder=True,geneFilter=None,zscore
                 t = t = [t[0]]+t[2:]
             ### color samples by annotated groups if an expression file
             new_headers=[]
-            if ('exp.' in filename or 'filteredExp.' in filename):# and ':' not in data:
+            temp_groups={}
+            original_headers=t[1:]
+            if ('exp.' in filename or 'filteredExp.' in filename or 'MarkerGene' in filename) and forceClusters==False:# and ':' not in data:
                 if overwriteGroupNotations:
                     ### Use groups file annotations over any header sample separation with a ":"
                     for i in t:
-                        if ':' in i:
-                            new_headers.append(string.split(i,':')[1])
+                        if ':' in i: ### Don't annotate groups according to the clusters
+                            group,i = string.split(i,':')
+                            new_headers.append(i)
+                            temp_groups[i] = group
                         else: new_headers.append(i)
                 filename = string.replace(filename,'-steady-state.txt','.txt')
                 try:
                     import ExpressionBuilder
-                    sample_group_db = ExpressionBuilder.simplerGroupImport(filename)
+                    try: sample_group_db = ExpressionBuilder.simplerGroupImport(filename)
+                    except Exception: sample_group_db={}
+                    if len(temp_groups)>0 and len(sample_group_db)==0:
+                        sample_group_db = temp_groups
+
                     if len(new_headers)>0:
                         t = new_headers
                     new_headers = []
@@ -1646,14 +1820,40 @@ def importData(filename,Normalize=False,reverseOrder=True,geneFilter=None,zscore
                 except Exception:
                     #print traceback.format_exc()
                     pass
+
             group_db, column_header = assignGroupColors(t[1:])
             x=1
         elif 'column_clusters-flat' in t:
             try:
-                prior = map(lambda x: int(float(x)),t[2:])
+                if 'NA' in t:
+                    kill
+                try:
+                    if forceClusters==False:
+                        prior = map(lambda x: int(float(x)),t[2:])
+                    else:
+                        prior = map(lambda x: x,t[2:])
+                except Exception:
+                    ### Replace the cluster string with number
+                    index=0
+                    c=1; prior=[]; clusters={}
+                    for i in t[2:]:
+                        original_headers[index] = i+':'+original_headers[index]
+                        if i in clusters:
+                            c1 = clusters[i]
+                        else:
+                            c1 = c; clusters[i]=c1
+                            c+=1
+                        prior.append(c1)
+                        index+=1
+                    #prior=[]
+                    
+                    if len(temp_groups)==0: ### Hence, no secondary group label combined with the sample name
+                        if '-ReOrdered.txt' not in filename: ### Applies to cellHarmony UMAP and heatmap visualization
+                            group_db, column_header = assignGroupColors(original_headers)
                 #priorColumnClusters = dict(zip(column_header, prior))
                 priorColumnClusters = prior
             except Exception:
+                #print traceback.format_exc() 
                 pass
             start = 2
             getRowClusters = True
@@ -1679,7 +1879,10 @@ def importData(filename,Normalize=False,reverseOrder=True,geneFilter=None,zscore
                         except Exception: s.append(0.000101)
                     #s = numpy.ma.masked_values(s, 0.000101)
                 original_matrix.append(s)
-                if max(s)>inputMax: inputMax = max(s)
+                try:
+                    if max(s)>inputMax: inputMax = max(s)
+                except:
+                    continue ### empty row
                 if min(s)<inputMin: inputMin = min(s)
                 #if (abs(max(s)-min(s)))>2:
                 if Normalize!=False:
@@ -1688,7 +1891,8 @@ def importData(filename,Normalize=False,reverseOrder=True,geneFilter=None,zscore
                         if Normalize=='row mean':
                             #avg = min(s)
                             avg = numpy.mean(s)
-                        else: avg = avg = numpy.median(s)
+                        else:
+                            avg = numpy.median(s)
                     if nullsPresent:
                         s=[] ### Needs to be done to zero out the values
                         for value in t[start:]:
@@ -1780,7 +1984,7 @@ def importData(filename,Normalize=False,reverseOrder=True,geneFilter=None,zscore
     #if '.cdt' in filename: matrix.reverse(); row_header.reverse()
     for i in group_db2:
         if i not in group_db: group_db[i] = group_db2[i]
-            
+    ##print group_db;sys.exit()
     return matrix, column_header, row_header, dataset_name, group_db
 
 def importSIF(filename):
@@ -1835,9 +2039,9 @@ def assignGroupColors(t):
 
     if len(group_number_db)>3:
         color_list = []
-        cm = pylab.cm.get_cmap('gist_rainbow') #gist_ncar # binary
+        cm = pylab.cm.get_cmap('nipy_spectral') #gist_ncar # binary
         for i in range(len(group_number_db)):
-            color_list.append(cm(1.*i/len(group_number_db)))  # color will now be an RGBA tuple
+            color_list.append(cm(1.*i/(len(group_number_db)-1)))  # color will now be an RGBA tuple
     #color_list=[]
     #color_template = [1,1,1,0,0,0,0.5,0.5,0.5,0.25,0.25,0.25,0.75,0.75,0.75]
     t.sort() ### Ensure that all clusters have the same order of groups
@@ -1928,10 +2132,45 @@ def importtSNEScores(inputdir):
         scores.append(t)
     return scores
 
+def runUMAP(matrix, column_header,dataset_name,group_db,display=False,showLabels=False,
+         row_header=None,colorByGene=None,species=None,reimportModelScores=True,method="UMAP",rootDir='',finalOutputDir=''):
+    global root_dir
+    global graphic_link
+    graphic_link=[]
+    root_dir = rootDir
+    
+    tSNE(matrix, column_header,dataset_name,group_db,display=False,showLabels=False,
+         row_header=None,colorByGene=None,species=None,reimportModelScores=True,method="UMAP")
+    import shutil
+    filename = 'Clustering-'+dataset_name+'-'+method+'.pdf'
+    filename = string.replace(filename,'Clustering-Clustering','Clustering')
+    new_file=finalOutputDir + filename
+    new_file=string.replace(new_file,'Clustering-','')
+    new_file=string.replace(new_file,'exp.','')
+    old_file=root_dir+filename
+    shutil.move(old_file,new_file)
+    
+    filename = filename[:-3]+'png'
+    new_file=finalOutputDir + filename
+    new_file=string.replace(new_file,'Clustering-','')
+    new_file=string.replace(new_file,'exp.','')
+    old_file=root_dir+filename
+    shutil.move(old_file,new_file)
+    old_file=root_dir+dataset_name+'-'+method+'_scores.txt'
+    new_file=finalOutputDir+dataset_name+'-'+method+'_coordinates.txt'
+    new_file=string.replace(new_file,'exp.','')
+    shutil.move(old_file,new_file)
+
 def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=False,
-         row_header=None,colorByGene=None,species=None,reimportModelScores=True):
+         row_header=None,colorByGene=None,species=None,reimportModelScores=True,
+         method="tSNE",maskGroups=None):
+
     try: prior_clusters = priorColumnClusters
     except Exception: prior_clusters=[]
+    try:
+        if priorColumnClusters==None: prior_clusters=[]
+    except:
+        pass
     try:
         if len(prior_clusters)>0 and len(group_db)==0:
             newColumnHeader=[]
@@ -1941,32 +2180,60 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
                 i+=1
             group_db, column_header = assignGroupColors(newColumnHeader)    
     except Exception,e:
+        print traceback.format_exc()
         #print e
         group_db={}
-
+        
     if reimportModelScores:
-        print 'Re-importing t-SNE model scores rather than calculating from scratch',
-        print root_dir+dataset_name+'-tSNE_scores.txt'
-        try: scores = importtSNEScores(root_dir+dataset_name+'-tSNE_scores.txt'); print '...import finished'
+        print 'Re-importing',method,'model scores rather than calculating from scratch',
+        print root_dir+dataset_name+'-'+method+'_scores.txt'
+        try: scores = importtSNEScores(root_dir+dataset_name+'-'+method+'_scores.txt'); print '...import finished'
         except Exception:
-            reimportModelScores=False; print '...import failed'
+            reimportModelScores=False; print '...no existing score file found'
         
     if reimportModelScores==False:
-        from sklearn.manifold import TSNE
         X=matrix.T
+        """
+        from tsne import bh_sne
+        X = np.asarray(X).astype('float64')
+        X = X.reshape((X.shape[0], -1))
+        x_data = x_data.reshape((x_data.shape[0], -1))
+        scores = bh_sne(X)"""
         
         #model = TSNE(n_components=2, random_state=0,init='pca',early_exaggeration=4.0,perplexity=20)
-        model = TSNE(n_components=2)
+        print "Performing",method
+        if method=="tSNE" or method=="t-SNE":
+            from sklearn.manifold import TSNE
+            model = TSNE(n_components=2)
+        if method=="UMAP":
+            try:
+                import umap
+                model=umap.UMAP(n_neighbors=50,min_dist=0.75,metric='correlation')
+            except: 
+                try:
+                    from visualization_scripts.umap_learn import umap ### Bypasses issues with Py2app importing umap (and secondarily numba/llvmlite)
+                    model=umap.UMAP(n_neighbors=50,min_dist=0.75,metric='correlation')
+                except: ### requires single-threading for Windows platforms (possibly others)
+                    from visualization_scripts.umap_learn_single import umap ### Bypasses issues with Py2app importing umap (and secondarily numba/llvmlite)
+                    model=umap.UMAP(n_neighbors=50,min_dist=0.75,metric='correlation')
+            print 'UMAP run'
+        #model = TSNE(n_components=2,init='pca', random_state=0, verbose=1, perplexity=40, n_iter=300)
+        #model = TSNE(n_components=2,verbose=1, perplexity=40, n_iter=300)
         #model = TSNE(n_components=2, random_state=0, n_iter=10000, early_exaggeration=10)
         scores=model.fit_transform(X)
         
         ### Export the results for optional re-import later
-        writetSNEScores(scores,root_dir+dataset_name+'-tSNE_scores.txt')
+        writetSNEScores(scores,root_dir+dataset_name+'-'+method+'_scores.txt')
         #pylab.scatter(scores[:,0], scores[:,1], 20, labels);
     
+    if maskGroups != None:
+        group_name,restricted_samples = maskGroups
+        dataset_name += '-'+group_name ### indicate the restricted group
+        
     ### Exclude samples with high TSNE deviations
     scoresT = zip(*scores)
     exclude={}
+    
     try:
         for vector in scoresT:
             lower1th,median_val,upper99th,int_qrt_range = statistics.iqr(list(vector),k1=99.9,k2=0.1)
@@ -1982,8 +2249,8 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
             
     fig = pylab.figure()
     ax = fig.add_subplot(111)
-    pylab.xlabel('TSNE-X')
-    pylab.ylabel('TSNE-Y')
+    pylab.xlabel(method.upper()+'-X')
+    pylab.ylabel(method.upper()+'-Y')
 
     axes = getAxesTransposed(scores,exclude=exclude) ### adds buffer space to the end of each axis and creates room for a legend
     pylab.axis(axes)
@@ -2001,6 +2268,10 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
         marker_size = 4
     if len(column_header)>2000:
         marker_size = 3
+    if len(column_header)>4000:
+        marker_size = 2
+    if len(column_header)>6000:
+        marker_size = 1
         
     ### Color By Gene
     if colorByGene != None and len(matrix)==0:
@@ -2042,6 +2313,11 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
         else:
             if numberGenesPresent==2:
                 cm = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF'])
+                #cm = matplotlib.colors.ListedColormap(['w', 'k']) ### If you want to hide one of the groups
+            else:
+                cm = pylab.cm.get_cmap('gist_rainbow')
+                cm = pylab.cm.get_cmap('nipy_spectral')
+            """
             elif numberGenesPresent==3: 
                 cm = matplotlib.colors.ListedColormap(['#88BF47', '#3D3181', '#EE2C3C'])
             elif numberGenesPresent==4:
@@ -2052,8 +2328,13 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
                 cm = matplotlib.colors.ListedColormap(['#88BF47', '#29C3EC', '#3D3181', '#7B4976','#FEBC18', '#EE2C3C'])
             elif numberGenesPresent==7:
                 cm = matplotlib.colors.ListedColormap(['#88BF47', '#63C6BB', '#29C3EC', '#3D3181', '#7B4976','#FEBC18', '#EE2C3C'])
-            else:
-                cm = pylab.cm.get_cmap('gist_rainbow')
+            """
+
+        def get_cmap(n, name='hsv'):
+            '''Returns a function that maps each index in 0, 1, ..., n-1 to a distinct 
+            RGB color; the keyword argument name must be a standard mpl colormap name.'''
+            return pylab.cm.get_cmap(name, n)
+        
         if genePresent:
             dataset_name+='-'+colorByGene
             group_db={}
@@ -2077,6 +2358,7 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
                         ranges.append(r)
                         iz+=bin_size
                     color_db = {}
+                    colors = get_cmap(len(genes))
                     for i in range(len(ranges)):
                         if i==0:
                             color = '#C0C0C0'
@@ -2087,7 +2369,10 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
                                 #color = cm(1.*(i+1)/len(ranges))
                             else:
                                 if i>2:
-                                    color = cm(k)
+                                    if len(genes)<8:
+                                        color = cm(k)
+                                    else:
+                                        color = colors(k)
                                 else:
                                     color = '#C0C0C0'
                         color_db[ranges[i]] = color
@@ -2124,22 +2409,32 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
         else:
             print [colorByGene], 'not found in rows...'
             
-    pylab.title('t-SNE - '+dataset_name)
+    pylab.title(method+' - '+dataset_name)
     
     group_names={}
+    group_scores={}
     i=0
     for sample_name in column_header: #scores[0]
-        ### Add the text labels for each
-        try:
-            ### Get group name and color information
-            group_name,color,k = group_db[sample_name]
-            if group_name not in group_names:
-                label = group_name ### Only add once for each group
-            else: label = None
-            group_names[group_name] = color
-        except Exception:
-            color = 'r'; label=None
+        if maskGroups != None:
+            base_name = sample_name
+            if ':' in sample_name:
+                base_name = string.split(base_name,':')[1]
+            if base_name not in restricted_samples:
+                exclude[i]=None ### Don't visualize this sample
         if i not in exclude:
+            ### Add the text labels for each
+            try:
+                ### Get group name and color information
+                group_name,color,k = group_db[sample_name]
+                if group_name not in group_names:
+                    label = group_name ### Only add once for each group
+                else: label = None
+                group_names[group_name] = color
+                ### Get the mean coordinates for each group label
+                try: group_scores[group_name].append([scores[i][0],scores[i][1]])
+                except: group_scores[group_name] = [[scores[i][0],scores[i][1]]]
+            except Exception:
+                color = 'r'; label=None
             ax.plot(scores[i][0],scores[i][1],color=color,marker='o',markersize=marker_size,label=label,markeredgewidth=0,picker=True)
             #except Exception: print i, len(scores[pcB]);kill
             if showLabels:
@@ -2147,7 +2442,40 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
                 except Exception: pass
                 ax.text(scores[i][0],scores[i][1],sample_name,fontsize=11)
         i+=1
-
+    try:
+    
+        font_size = 12
+        if len(group_scores)>10:
+            font_size = 10
+        if len(group_scores)>20:
+            font_size = 8
+        if len(group_scores)>40:
+            font_size = 6
+        ### Compute the mode coordinate pair to assign the group label to a fragmented population
+        for group_name in group_scores:
+            coords = group_scores[group_name]
+            coords.sort()
+            new_font_size = font_size
+            #avg = [float(sum(col))/len(col) for col in zip(*coords)] ### separate average values
+            #avg = [float(numpy.median(col)) for col in zip(*coords)] ### separate median values
+            #avg = coords[len(coords)/2]  ### median list
+            coord1 = stats.mode(map(lambda x: int(x[0]), coords))[0][0]
+            coord2 = stats.mode(map(lambda x: int(x[1]), coords))[0][0]
+            for coord in coords:
+                if int(coord[0]) == coord1:
+                    coord1 = coord[0]
+                    coord2 = coord[1]
+                    break
+            if len(group_name)>10:
+                new_font_size = font_size-2
+                print group_name
+            ax.text(coord1+0.02,coord2+0.02,group_name,fontsize=new_font_size,color='white',ha='center')
+            ax.text(coord1-0.02,coord2-0.02,group_name,fontsize=new_font_size,color='white',ha='center')
+            ax.text(coord1,coord2,group_name,fontsize=new_font_size,color='black',ha='center')
+    except:
+        #print traceback.format_exc()
+        pass
+    
     group_count = []
     for i in group_db:
         if group_db[i][0] not in group_count:
@@ -2175,12 +2503,14 @@ def tSNE(matrix, column_header,dataset_name,group_db,display=True,showLabels=Fal
         ax.set_position([box.x0, box.y0, box.width, box.height])
         pylab.legend(loc="upper left", prop={'size': 10})
   
-    filename = 'Clustering-%s-t-SNE.pdf' % dataset_name
+    filename = 'Clustering-'+dataset_name+'-'+method+'.pdf'
+    filename = string.replace(filename,'Clustering-Clustering','Clustering')
     try: pylab.savefig(root_dir + filename)
     except Exception: None ### Rare error
     #print 'Exporting:',filename
     filename = filename[:-3]+'png'
-    try: pylab.savefig(root_dir + filename) #dpi=200
+
+    try: pylab.savefig(root_dir + filename) #dpi=200, transparent=True
     except Exception: None ### Rare error
     graphic_link.append(['Principal Component Analysis',root_dir+filename])
 
@@ -2218,7 +2548,7 @@ def excludeHighlyCorrelatedHits(x,row_header):
 
 def PrincipalComponentAnalysis(matrix, column_header, row_header, dataset_name,
             group_db, display=False, showLabels=True, algorithm='SVD', geneSetName=None,
-            species=None, pcA=1,pcB=2, colorByGene=None):
+            species=None, pcA=1,pcB=2, colorByGene=None, reimportModelScores=True):
     print "Performing Principal Component Analysis..."
     from numpy import mean,cov,double,cumsum,dot,linalg,array,rank
 
@@ -2227,7 +2557,6 @@ def PrincipalComponentAnalysis(matrix, column_header, row_header, dataset_name,
     if prior_clusters == None: prior_clusters=[]
     try:
         if len(prior_clusters)>0 and len(group_db)==0:
-            print 'here'
             newColumnHeader=[]
             i=0
             for sample_name in column_header:
@@ -2240,7 +2569,8 @@ def PrincipalComponentAnalysis(matrix, column_header, row_header, dataset_name,
         
     pcA-=1
     pcB-=1
-    
+    label1=''
+    label2=''
     """ Based in part on code from:
     http://glowingpython.blogspot.com/2011/07/principal-component-analysis-with-numpy.html
 
@@ -2265,89 +2595,103 @@ def PrincipalComponentAnalysis(matrix, column_header, row_header, dataset_name,
     
     if algorithm == 'SVD': use_svd = True
     else: use_svd = False
-    #Mdif = matrix-matrix.mean(axis=0)# subtract the mean (along columns)
-    #M = (matrix-mean(matrix.T,axis=1)).T # subtract the mean (along columns)
-    Mdif = matrix/matrix.std()
-    Mdif = Mdif.T
-    u, s, vt = svd(Mdif, 0)
-    fracs = s**2/np.sum(s**2)
-    entropy = -sum(fracs*np.log(fracs))/np.log(np.min(vt.shape))
     
-    label1 = 'PC%i (%2.1f%%)' %(pcA+1, fracs[0]*100)
-    label2 = 'PC%i (%2.1f%%)' %(pcB+1, fracs[1]*100)
-
-    #http://docs.scipy.org/doc/scipy/reference/sparse.html
-    #scipy.sparse.linalg.svds - sparse svd
-    #idx = numpy.argsort(vt[0,:])
-    #print idx;sys.exit() # Use this as your cell order or use a density analysis to get groups
-    
-    ####  FROM LARSSON ########
-    #100 most correlated Genes with PC1
-    #print vt
-    PCsToInclude = 4
-    correlated_db={}
-    allGenes={}
-    new_matrix = []
-    new_headers = []
-    added_indexes=[]
-    x = 0
-    #100 most correlated Genes with PC1
-    print 'exporting PCA loading genes to:',root_dir+'/PCA/correlated.txt'
-    exportData = export.ExportFile(root_dir+'/PCA/correlated.txt')
-    
-    matrix = zip(*matrix) ### transpose this back to normal
-    try:
-        while x<PCsToInclude:
-            idx = numpy.argsort(u[:,x])         
-            correlated = map(lambda i: row_header[i],idx[:300])
-            anticorrelated = map(lambda i: row_header[i],idx[-300:])
-            correlated_db[x] = correlated,anticorrelated
-            ### Create a new filtered matrix of loading gene indexes
-            fidx = list(idx[:300])+list(idx[-300:])
-            for i in fidx:
-                if i not in added_indexes:
-                    added_indexes.append(i)
-                    new_headers.append(row_header[i])
-                    new_matrix.append(matrix[i])
-            x+=1
-                    
-        #redundant_genes = excludeHighlyCorrelatedHits(numpy.array(new_matrix),new_headers)
-        redundant_genes = []
+    if reimportModelScores:
+        print 'Re-importing PCA model scores rather than calculating from scratch',
+        print root_dir+dataset_name+'-PCA_scores.txt'
+        try:
+            scores = importtSNEScores(root_dir+dataset_name+'-PCA_scores.txt'); print '...import finished'
+            matrix = zip(*matrix)
+        except Exception:
+            reimportModelScores=False; print '...no existing score file found'
         
-        for x in correlated_db:
-            correlated,anticorrelated = correlated_db[x]
-            count=0
-            for gene in correlated:
-                if gene not in redundant_genes and count<100:
-                    exportData.write(gene+'\tcorrelated-PC'+str(x+1)+'\n'); allGenes[gene]=[]
-                    count+=1
-            count=0
-            for gene in anticorrelated:
-                if gene not in redundant_genes and count<100:
-                    exportData.write(gene+'\tanticorrelated-PC'+str(x+1)+'\n'); allGenes[gene]=[]
-                    count+=1
-        exportData.close()
+    if reimportModelScores==False:
+            
+        #Mdif = matrix-matrix.mean(axis=0)# subtract the mean (along columns)
+        #M = (matrix-mean(matrix.T,axis=1)).T # subtract the mean (along columns)
+        Mdif = matrix/matrix.std()
+        Mdif = Mdif.T
+        u, s, vt = svd(Mdif, 0)
+        fracs = s**2/np.sum(s**2)
+        entropy = -sum(fracs*np.log(fracs))/np.log(np.min(vt.shape))
         
-        if geneSetName != None:
-            if len(geneSetName)>0:
-                exportCustomGeneSet(geneSetName,species,allGenes)
-                print 'Exported geneset to "StoredGeneSets"'
-    except Exception:
-        pass       
-
-    ###########################
+        label1 = 'PC%i (%2.1f%%)' %(pcA+1, fracs[0]*100)
+        label2 = 'PC%i (%2.1f%%)' %(pcB+1, fracs[1]*100)
     
-    #if len(row_header)>20000:
-    #print '....Using eigenvectors of the real symmetric square matrix for efficiency...'
-    #[latent,coeff] = scipy.sparse.linalg.eigsh(cov(M))
-    #scores=mlab.PCA(scores)
+        #http://docs.scipy.org/doc/scipy/reference/sparse.html
+        #scipy.sparse.linalg.svds - sparse svd
+        #idx = numpy.argsort(vt[0,:])
+        #print idx;sys.exit() # Use this as your cell order or use a density analysis to get groups
+        
+        ####  FROM LARSSON ########
+        #100 most correlated Genes with PC1
+        #print vt
+        PCsToInclude = 4
+        correlated_db={}
+        allGenes={}
+        new_matrix = []
+        new_headers = []
+        added_indexes=[]
+        x = 0
+        #100 most correlated Genes with PC1
+        print 'exporting PCA loading genes to:',root_dir+'/PCA/correlated.txt'
+        exportData = export.ExportFile(root_dir+'/PCA/correlated.txt')
+        
+        matrix = zip(*matrix) ### transpose this back to normal
+        try:
+            while x<PCsToInclude:
+                idx = numpy.argsort(u[:,x])         
+                correlated = map(lambda i: row_header[i],idx[:300])
+                anticorrelated = map(lambda i: row_header[i],idx[-300:])
+                correlated_db[x] = correlated,anticorrelated
+                ### Create a new filtered matrix of loading gene indexes
+                fidx = list(idx[:300])+list(idx[-300:])
+                for i in fidx:
+                    if i not in added_indexes:
+                        added_indexes.append(i)
+                        new_headers.append(row_header[i])
+                        new_matrix.append(matrix[i])
+                x+=1
+                        
+            #redundant_genes = excludeHighlyCorrelatedHits(numpy.array(new_matrix),new_headers)
+            redundant_genes = []
+            
+            for x in correlated_db:
+                correlated,anticorrelated = correlated_db[x]
+                count=0
+                for gene in correlated:
+                    if gene not in redundant_genes and count<100:
+                        exportData.write(gene+'\tcorrelated-PC'+str(x+1)+'\n'); allGenes[gene]=[]
+                        count+=1
+                count=0
+                for gene in anticorrelated:
+                    if gene not in redundant_genes and count<100:
+                        exportData.write(gene+'\tanticorrelated-PC'+str(x+1)+'\n'); allGenes[gene]=[]
+                        count+=1
+            exportData.close()
+            
+            if geneSetName != None:
+                if len(geneSetName)>0:
+                    exportCustomGeneSet(geneSetName,species,allGenes)
+                    print 'Exported geneset to "StoredGeneSets"'
+        except Exception:
+            pass       
     
-    if use_svd == False:
-        [latent,coeff] = linalg.eig(cov(M))
-        scores = dot(coeff.T,M) # projection of the data in the new space
-    else:
-        ### transform u into the same structure as the original scores from linalg.eig coeff
-        scores = vt
+        ###########################
+        
+        #if len(row_header)>20000:
+        #print '....Using eigenvectors of the real symmetric square matrix for efficiency...'
+        #[latent,coeff] = scipy.sparse.linalg.eigsh(cov(M))
+        #scores=mlab.PCA(scores)
+        
+        if use_svd == False:
+            [latent,coeff] = linalg.eig(cov(M))
+            scores = dot(coeff.T,M) # projection of the data in the new space
+        else:
+            ### transform u into the same structure as the original scores from linalg.eig coeff
+            scores = vt
+        
+        writetSNEScores(scores,root_dir+dataset_name+'-PCA_scores.txt')
     
     fig = pylab.figure()
     ax = fig.add_subplot(111)
@@ -2375,6 +2719,7 @@ def PrincipalComponentAnalysis(matrix, column_header, row_header, dataset_name,
     #samples = list(column_header)
     ### Color By Gene
     if colorByGene != None:
+        print 'Coloring based on feature expression.'
         gene_translation_db={}
         matrix = numpy.array(matrix)
         min_val = matrix.min()  ### min val
@@ -2410,6 +2755,11 @@ def PrincipalComponentAnalysis(matrix, column_header, row_header, dataset_name,
         else:
             if numberGenesPresent==2:
                 cm = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF'])
+                #cm = matplotlib.colors.ListedColormap(['w', 'k']) ### If you want to hide one of the groups
+            else:
+                cm = pylab.cm.get_cmap('gist_rainbow')
+                cm = pylab.cm.get_cmap('nipy_spectral')
+            """
             elif numberGenesPresent==3: 
                 cm = matplotlib.colors.ListedColormap(['#88BF47', '#3D3181', '#EE2C3C'])
             elif numberGenesPresent==4:
@@ -2420,8 +2770,13 @@ def PrincipalComponentAnalysis(matrix, column_header, row_header, dataset_name,
                 cm = matplotlib.colors.ListedColormap(['#88BF47', '#29C3EC', '#3D3181', '#7B4976','#FEBC18', '#EE2C3C'])
             elif numberGenesPresent==7:
                 cm = matplotlib.colors.ListedColormap(['#88BF47', '#63C6BB', '#29C3EC', '#3D3181', '#7B4976','#FEBC18', '#EE2C3C'])
-            else:
-                cm = pylab.cm.get_cmap('gist_rainbow')
+
+            """
+        def get_cmap(n, name='hsv'):
+            '''Returns a function that maps each index in 0, 1, ..., n-1 to a distinct 
+            RGB color; the keyword argument name must be a standard mpl colormap name.'''
+            return pylab.cm.get_cmap(name, n)
+        
         if genePresent:
             dataset_name+='-'+colorByGene
             group_db={}
@@ -2445,6 +2800,7 @@ def PrincipalComponentAnalysis(matrix, column_header, row_header, dataset_name,
                         ranges.append(r)
                         iz+=bin_size
                     color_db = {}
+                    colors = get_cmap(len(genes))
                     for i in range(len(ranges)):
                         if i==0:
                             color = '#C0C0C0'
@@ -2455,7 +2811,10 @@ def PrincipalComponentAnalysis(matrix, column_header, row_header, dataset_name,
                                 #color = cm(1.*(i+1)/len(ranges))
                             else:
                                 if i>2:
-                                    color = cm(k)
+                                    if len(genes)<8:
+                                        color = cm(k)
+                                    else:
+                                        color = colors(k)
                                 else:
                                     color = '#C0C0C0'
                         color_db[ranges[i]] = color
@@ -2902,6 +3261,7 @@ def PCA3D(matrix, column_header, row_header, dataset_name, group_db,
         else:
             if numberGenesPresent==2:
                 cm = matplotlib.colors.ListedColormap(['#00FF00', '#1E90FF'])
+                cm = matplotlib.colors.ListedColormap(['w', 'k'])
             elif numberGenesPresent==3: 
                 cm = matplotlib.colors.ListedColormap(['#88BF47', '#3D3181', '#EE2C3C'])
             elif numberGenesPresent==4:
@@ -3480,7 +3840,7 @@ def runHCexplicit(filename, graphics, row_method, row_metric, column_method, col
     #"""
     #graphic_link = [root_dir+'Clustering-exp.myeloid-steady-state-amplify positive Mki67 Clec4a2 Gria3 Ifitm6 Gfi1b -hierarchical_cosine_cosine.txt']
 
-    if 'driver' in targetGene or 'guide' in targetGene:
+    if 'guide' in targetGene:
         import RNASeq
         input_file = graphic_link[-1][-1][:-4]+'.txt'
         if 'excludeCellCycle' in targetGene: excludeCellCycle = True
@@ -3691,7 +4051,10 @@ def getAllCorrelatedGenes(matrix,row_header,column_header,species,platform,vendo
             original_rowid = row_id
             symbol=row_id
             new_symbol = symbol
-            if ':' in row_id and '|' not in row_id:
+            rigorous_search = True
+            if ':' in row_id and '|' in row_id:
+                rigorous_search = False
+            elif ':' in row_id and '|' not in row_id:
                 a,b = string.split(row_id,':')[:2]
                 if 'ENS' in a or len(a)==17:
                     try:
@@ -3704,21 +4067,27 @@ def getAllCorrelatedGenes(matrix,row_header,column_header,species,platform,vendo
                 elif 'ENS' in b:
                     symbol = original_rowid
                     row_id = a
-            try: row_id,symbol = string.split(row_id,' ')[:2] ### standard ID convention is ID space symbol
-            except Exception:
-                try: symbol = gene_to_symbol[row_id][0]
+            if rigorous_search:
+                try: row_id,symbol = string.split(row_id,' ')[:2] ### standard ID convention is ID space symbol
                 except Exception:
-                    if 'ENS' not in original_rowid:
-                        row_id, symbol = row_id, row_id
-                new_symbol = symbol
-            if 'ENS' not in original_rowid and len(original_rowid)!=17:
-                if original_rowid != symbol:
-                    symbol = original_rowid+' '+symbol
-            for gene in targetGenes:
-                if string.lower(gene) == string.lower(row_id) or string.lower(gene) == string.lower(symbol) or string.lower(original_rowid)==string.lower(gene) or string.lower(gene) == string.lower(new_symbol):
-                    matrix2.append(matrix[i]) ### Values for the row
-                    row_header2.append(symbol)
-                    matrix_db[symbol]=matrix[i]
+                    try: symbol = gene_to_symbol[row_id][0]
+                    except Exception:
+                        if 'ENS' not in original_rowid:
+                            row_id, symbol = row_id, row_id
+                    new_symbol = symbol
+                if 'ENS' not in original_rowid and len(original_rowid)!=17:
+                    if original_rowid != symbol:
+                        symbol = original_rowid+' '+symbol
+                for gene in targetGenes:
+                    if string.lower(gene) == string.lower(row_id) or string.lower(gene) == string.lower(symbol) or string.lower(original_rowid)==string.lower(gene) or string.lower(gene) == string.lower(new_symbol):
+                        matrix2.append(matrix[i]) ### Values for the row
+                        row_header2.append(symbol)
+                        matrix_db[symbol]=matrix[i]
+            else:
+                if row_id in targetGenes:
+                    matrix2.append(matrix[i])
+                    row_header2.append(row_id)
+                    matrix_db[row_id]=matrix[i]
             i+=1
         i=0
         #for gene in targetGenes:
@@ -3771,9 +4140,13 @@ def getAllCorrelatedGenes(matrix,row_header,column_header,species,platform,vendo
                 #print traceback.format_exc()
                 rho_results = markerFinder.simpleScipyPearson(matrix,targetGeneValues)
             correlated_symbols={}
-            #print targetGeneID, rho_results[:130][-1];sys.exit()
+            #print targetGeneID, rho_results[:100]
+            #print targetGeneID, rho_results[-100:];sys.exit()
             for (rho,ind) in rho_results[:limit]: ### Get the top-50 correlated plus the gene of interest
                 proceed = True
+                try:
+                    if len(rho)==2: rho = rho[0]
+                except: pass
                 if 'top' in targetGene:
                     if rho_results[4][0]<rho_cutoff: proceed = False
                 if rho>rho_cutoff and proceed: #and rho_results[3][0]>rho_cutoff:# ensures only clustered genes considered
@@ -3804,11 +4177,13 @@ def getAllCorrelatedGenes(matrix,row_header,column_header,species,platform,vendo
             #sys.exit()
             rho_results.reverse()
             for (rho,ind) in rho_results[:limit]: ### Get the top-50 anti-correlated plus the gene of interest
+                try:
+                    if len(rho)==2: rho = rho[0]
+                except: pass
                 if rho<-1*rho_cutoff and 'positive' not in targetGene:
                     rh = row_header[ind]
                     #if gene_to_symbol[rh][0] in targetGenes:anticorrelated.append(gene_to_symbol[rh][0])
                     #anticorrelated.append(gene_to_symbol[rh][0])
-                    
                     if len(row_header2)<100 or multipleGenes:
                         rh = row_header[ind]
                         if matrix[ind] not in matrix2:
@@ -4010,6 +4385,7 @@ def runHCOnly(filename,graphics,Normalize=False):
     global storeGeneSetName
     targetGene=[]
     filterByPathways=False
+    justShowTheseIDs=[]
     ###############
     
     graphic_link=graphics ### Store all locations of pngs
@@ -4052,7 +4428,8 @@ def timestamp():
 
 def runPCAonly(filename,graphics,transpose,showLabels=True,plotType='3D',display=True,
                algorithm='SVD',geneSetName=None, species=None, zscore=True, colorByGene=None,
-               reimportModelScores=True, separateGenePlots=False):
+               reimportModelScores=True, separateGenePlots=False, forceClusters=False, maskGroups=None):
+
     global root_dir
     global graphic_link
     graphic_link=graphics ### Store all locations of pngs
@@ -4061,6 +4438,7 @@ def runPCAonly(filename,graphics,transpose,showLabels=True,plotType='3D',display
     root_dir = string.replace(root_dir,'/amplify','')
     root_dir = string.replace(root_dir,'ExpressionOutput/Clustering','DataPlots')
     root_dir = string.replace(root_dir,'ExpressionInput','DataPlots')
+    root_dir = string.replace(root_dir,'ICGS-NMF','DataPlots')
     if 'DataPlots' not in root_dir:
         root_dir += '/DataPlots/'
     try: os.mkdir(root_dir) ### May need to create this directory
@@ -4068,11 +4446,14 @@ def runPCAonly(filename,graphics,transpose,showLabels=True,plotType='3D',display
         
     ### Transpose matrix and build PCA
     geneFilter=None
-    if algorithm == 't-SNE' and reimportModelScores:
+    if (algorithm == 't-SNE' or algorithm == 'UMAP') and reimportModelScores:
         dataset_name = string.split(filename,'/')[-1][:-4]
         try:
             ### if the scores are present, we only need to import the genes of interest (save time importing large matrices)
-            importtSNEScores(root_dir+dataset_name+'-tSNE_scores.txt')
+            if algorithm == 't-SNE':
+                importtSNEScores(root_dir+dataset_name+'-t-SNE_scores.txt')
+            if algorithm == 'UMAP':
+                importtSNEScores(root_dir+dataset_name+'-UMAP_scores.txt')
             if len(colorByGene)==None:
                 geneFilter = [''] ### It won't import the matrix, basically
             elif ' ' in colorByGene or ',' in colorByGene:
@@ -4081,34 +4462,50 @@ def runPCAonly(filename,graphics,transpose,showLabels=True,plotType='3D',display
             else:
                 geneFilter = [colorByGene]
         except Exception:
+            #print traceback.format_exc();sys.exit()
             geneFilter = None ### It won't import the matrix, basically
 
-    matrix, column_header, row_header, dataset_name, group_db = importData(filename,zscore=zscore,geneFilter=geneFilter)
+    matrix, column_header, row_header, dataset_name, group_db = importData(filename,zscore=zscore,geneFilter=geneFilter,forceClusters=forceClusters)
     if transpose == False: ### We normally transpose the data, so if True, we don't transpose (I know, it's confusing)
         matrix = map(numpy.array, zip(*matrix)) ### coverts these to tuples
         column_header, row_header = row_header, column_header
-    if (len(column_header)>1000 or len(row_header)>1000) and algorithm != 't-SNE':
+    if (len(column_header)>1000 or len(row_header)>1000) and algorithm != 't-SNE' and algorithm != 'UMAP':
         print 'Performing Principal Component Analysis (please be patient)...'
     #PrincipalComponentAnalysis(numpy.array(matrix), row_header, column_header, dataset_name, group_db, display=True)
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore",category=UserWarning) ### hides import warnings
-        if algorithm == 't-SNE':
+        if algorithm == 't-SNE' or algorithm == 'UMAP':
             matrix = map(numpy.array, zip(*matrix)) ### coverts these to tuples
             column_header, row_header = row_header, column_header
             if separateGenePlots and (len(colorByGene)>0 or colorByGene==None):
                 for gene in geneFilter:
                     tSNE(numpy.array(matrix),column_header,dataset_name,group_db,display=False,
                          showLabels=showLabels,row_header=row_header,colorByGene=gene,species=species,
-                         reimportModelScores=reimportModelScores)
+                         reimportModelScores=reimportModelScores,method=algorithm)
                 if display:
                     ### Show the last one
                     tSNE(numpy.array(matrix),column_header,dataset_name,group_db,display=True,
                         showLabels=showLabels,row_header=row_header,colorByGene=gene,species=species,
-                        reimportModelScores=reimportModelScores)    
+                        reimportModelScores=reimportModelScores,method=algorithm)
+            elif maskGroups!=None:
+                """ Mask the samples not present in each examined group below """
+                import ExpressionBuilder
+                sample_group_db = ExpressionBuilder.simplerGroupImport(maskGroups)
+                ##print maskGroups
+                #print sample_group_db;sys.exit()
+                group_sample_db = {}
+                for sample in sample_group_db:
+                    try: group_sample_db[sample_group_db[sample]].append(sample)
+                    except: group_sample_db[sample_group_db[sample]] = [sample]
+                for group in group_sample_db:
+                    restricted_samples = group_sample_db[group]
+                    tSNE(numpy.array(matrix),column_header,dataset_name,group_db,display=display,
+                        showLabels=showLabels,row_header=row_header,colorByGene=colorByGene,species=species,
+                        reimportModelScores=reimportModelScores,method=algorithm,maskGroups=(group,restricted_samples))
             else:
                 tSNE(numpy.array(matrix),column_header,dataset_name,group_db,display=display,
                      showLabels=showLabels,row_header=row_header,colorByGene=colorByGene,species=species,
-                     reimportModelScores=reimportModelScores)
+                     reimportModelScores=reimportModelScores,method=algorithm)
         elif plotType == '3D':
             try: PCA3D(numpy.array(matrix), row_header, column_header, dataset_name, group_db,
                        display=display, showLabels=showLabels, algorithm=algorithm, geneSetName=geneSetName,
@@ -4117,11 +4514,13 @@ def runPCAonly(filename,graphics,transpose,showLabels=True,plotType='3D',display
                 print traceback.format_exc()
                 PrincipalComponentAnalysis(numpy.array(matrix), row_header, column_header,
                         dataset_name, group_db, display=display, showLabels=showLabels, algorithm=algorithm,
-                        geneSetName=geneSetName, species=species, colorByGene=colorByGene)
+                        geneSetName=geneSetName, species=species, colorByGene=colorByGene,
+                        reimportModelScores=reimportModelScores)
         else:
             PrincipalComponentAnalysis(numpy.array(matrix), row_header, column_header, dataset_name,
                         group_db, display=display, showLabels=showLabels, algorithm=algorithm,
-                        geneSetName=geneSetName, species=species, colorByGene=colorByGene)
+                        geneSetName=geneSetName, species=species, colorByGene=colorByGene,
+                        reimportModelScores=reimportModelScores)
 
     return graphic_link
 
@@ -4333,9 +4732,10 @@ def buildGraphFromSIF(mod,species,sif_filename,ora_input_dir):
         #displaySimpleNetXGraph(sif_filename,fold_db,pathway_name)
         output_filename = iGraphSimple(sif_filename,fold_db,pathway_name)
     except Exception:
+        print 'igraph export failed due to an unknown error (not installed)'
         print traceback.format_exc()
         try: displaySimpleNetwork(sif_filename,fold_db,pathway_name)
-        except Exception: None ### GraphViz problem
+        except Exception: pass ### GraphViz problem
     return output_filename
 
 def iGraphSimple(sif_filename,fold_db,pathway_name):
@@ -4579,7 +4979,13 @@ def importDataSimple(filename,species,fold_db,mod):
         t = string.split(data,'\t')
         if data[0]=='#': x=0
         
-        elif x==0: x=1
+        elif x==0:
+            si=None; symbol_present = False
+            try:
+                si= t.index('Symbol')
+                symbol_present = True
+            except: pass
+            x=1
         else:
             if x == 1:
                 system_code = t[1]
@@ -4607,7 +5013,7 @@ def importDataSimple(filename,species,fold_db,mod):
                 try: met_to_symbol = gene_associations.importGeneData(species,'HMDB',simpleImport=True)
                 except Exception: met_to_symbol={}
                 for i in met_to_symbol: gene_to_symbol[i] = met_to_symbol[i] ### Add metabolite names
-
+                
             x+=1
             if source_is_mod == True:
                 if t[0] in gene_to_symbol:
@@ -4616,6 +5022,12 @@ def importDataSimple(filename,species,fold_db,mod):
                     except Exception: fold_db[symbol] = 0
                 else:
                     fold_db[t[0]] = 0 ### If not found (wrong ID with the wrong system) still try to color the ID in the network as yellow
+            elif symbol_present:
+                fold_db[t[si]] = 0
+                try: fold_db[t[si]] = float(t[2])
+                except Exception:
+                    try: fold_db[t[si]] = 0
+                    except: fold_db[t[0]] = 0
             elif t[0] in source_to_gene:
                 mod_ids = source_to_gene[t[0]]
                 try: mod_ids+=source_to_gene[t[2]] ###If the file is a SIF
@@ -4680,10 +5092,163 @@ def plotHistogram(filename):
     #pylab.hist(matrix, 50, cumulative=-1)
     pylab.show()
 
-def multipleSubPlots(filename,uids,SubPlotType='column'):
+def stackedbarchart(filename,display=False,output=False):
+    header=[]
+    conditions = []
+    data_matrix=[]
+    for line in open(filename,'rU').xreadlines():         
+        cd = cleanUpLine(line)
+        t = string.split(cd,'\t')
+        if len(header)==0:
+            header = t[4:]
+            exc_indexes = [0,2,4,6,8,10,12]
+            inc_indexes = [1,3,5,7,9,11,13]
+            inlc_header = map(lambda i: string.split(header[i],'_')[0],inc_indexes)
+            header = inlc_header            
+        else:
+            condition = t[0]
+            data = t[4:]
+            conditions.append(condition+'-inclusion ')
+            data_matrix.append(map(lambda i: float(data[i]),inc_indexes))
+            conditions.append(condition+'-exclusion ')
+            data_matrix.append(map(lambda i: float(data[i]),exc_indexes))
+            
+    data_matrix = map(numpy.array, zip(*data_matrix))
+    
+    #https://www.w3resource.com/graphics/matplotlib/barchart/matplotlib-barchart-exercise-16.php
+    # multi-dimensional data_matrix 
+    y_pos = np.arange(len(conditions))
+    
+    fig, ax = pylab.subplots()
+    #fig = pylab.figure(figsize=(10,8))
+    #ax = fig.add_subplot(111)
+    #pos1 = ax.get_position() # get the original position 
+    #pos2 = [pos1.x0 + 0.2, pos1.y0 - 0.2,  pos1.width / 1.2, pos1.height / 1.2 ] 
+    #ax.set_position(pos2) # set a new position
+    
+    colors =['royalblue','salmon','grey','gold','cornflowerblue','mediumseagreen','navy']
+    patch_handles = []
+    # left alignment of data_matrix starts at zero
+    left = np.zeros(len(conditions))
+    index=0
+    for i, d in enumerate(data_matrix):
+        patch_handles.append(ax.barh(y_pos, d, 0.3,
+            color=colors[index], align='center', 
+            left=left,label = header[index]))
+        left += d
+        index+=1
+    
+    # search all of the bar segments and annotate
+    """
+    for j in range(len(patch_handles)):
+        for i, patch in enumerate(patch_handles[j].get_children()):
+            bl = patch.get_xy()
+            x = 0.5*patch.get_width() + bl[0]
+            y = 0.5*patch.get_height() + bl[1]
+            #ax.text(x,y, "%d%%" % (percentages[i,j]), ha='center')
+    """
+    
+    ax.set_yticks(y_pos)
+    ax.set_yticklabels(conditions)
+    ax.set_xlabel('Events')
+    ax.legend(loc="best", bbox_to_anchor=(1.0, 1.0))
+
+    box = ax.get_position()
+
+    # Shink current axis by 20%
+    ax.set_position([box.x0+0.2, box.y0, box.width * 0.6, box.height])
+    try: ax.legend(loc='center left', bbox_to_anchor=(1, 0.5),fontsize = 10) ### move the legend over to the right of the plot
+    except Exception: ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+    ax.set_title('MultiPath-PSI Splicing Event Types')
+    
+    #pylab.tight_layout(pad=0.4, w_pad=0.5, h_pad=1.0)
+    if output==False:
+        pylab.savefig(filename[:-4]+'.pdf')
+        pylab.savefig(filename[:-4]+'.png')
+    else:
+        pylab.savefig(output[:-4]+'.pdf')
+        pylab.savefig(output[:-4]+'.png')
+    
+    if display:
+        print 'Exporting:',filename
+        try: pylab.show()
+        except Exception: None ### when run in headless mode    
+    
+def barchart(filename,index1,index2,x_axis,y_axis,title,display=False,color1='gold',color2='darkviolet',output=False):
+
+    header=[]
+    reference_data=[]
+    query_data=[]
+    groups=[]
+    for line in open(filename,'rU').xreadlines():         
+        data = cleanUpLine(line)
+        t = string.split(data,'\t')
+        if len(header)==0:
+            header = t
+            header1=header[index1]
+            header2=header[index2]
+        else:
+            reference_data.append(float(t[index1]))
+            q_value = float(t[index2])
+            if 'frequen' not in filename:
+                q_value = q_value*-1
+            query_data.append(q_value)
+            name = t[0]
+            if '_vs_' in name and 'event_summary' not in filename:
+                name = string.split(name,'_vs_')[0]
+                suffix=None
+                if '__' in name:
+                    suffix = string.split(name,'__')[-1]
+                if '_' in name:
+                    name = string.split(name,'_')[:-1]
+                    name = string.join(name,'_')
+                    if len(name)>20:
+                        name = string.split(name,'_')[0]
+                if suffix !=None:
+                    name+='_'+suffix
+            groups.append(name)
+
+    fig, ax = pylab.subplots()
+    
+    pos1 = ax.get_position() # get the original position 
+    pos2 = [pos1.x0 + 0.2, pos1.y0 + 0.1,  pos1.width / 1.2, pos1.height / 1.2 ] 
+    ax.set_position(pos2) # set a new position
+    
+    ind = np.arange(len(groups))  # the x locations for the groups
+    width = 0.35  # the width of the bars
+    query_data.reverse()
+    reference_data.reverse()
+    groups.reverse()
+
+    ax.barh(ind - width/2, query_data, width, color=color2, label=header2)
+    ax.barh(ind + width/2, reference_data, width,color=color1, label=header1)
+
+    ax.set_xlabel(x_axis)
+    ax.set_ylabel(y_axis)
+    ax.set_yticks(ind+0.175)
+    ax.set_yticklabels(groups)
+    ax.set_title(title)
+    ax.legend()
+
+    if output==False:
+        pylab.savefig(filename[:-4]+'.pdf')
+        #pylab.savefig(filename[:-4]+'.png')
+    else:
+        pylab.savefig(output[:-4]+'.pdf')
+        #pylab.savefig(output[:-4]+'.png')
+        
+    if display:
+        print 'Exporting:',filename
+        try: pylab.show()
+        except Exception: None ### when run in headless mode    
+    
+def multipleSubPlots(filename,uids,SubPlotType='column',n=20):
     #uids = [uids[-1]]+uids[:-1]
     str_uids = string.join(uids,'_')
     matrix, column_header, row_header, dataset_name, group_db = importData(filename,geneFilter=uids)
+    for uid in uids:
+        if uid not in row_header:
+            print uid,"is missing from the expression file."
     fig = pylab.figure()
     def ReplaceZeros(val,min_val):
         if val == 0: 
@@ -4699,6 +5264,7 @@ def multipleSubPlots(filename,uids,SubPlotType='column'):
             new_row_header.append(uid)
             try: update_exp_vals = map(lambda x: ReplaceZeros(x,0.0001),matrix[ind])
             except Exception: print uid, len(matrix[ind]);sys.exit()
+            #update_exp_vals = map(lambda x: math.pow(2,x+1),update_exp_vals) #- nonlog transform
             matrix2.append(update_exp_vals)
     matrix = numpy.array(matrix2)
     row_header = new_row_header
@@ -4707,7 +5273,8 @@ def multipleSubPlots(filename,uids,SubPlotType='column'):
     
     groups=[]
     for sample in column_header:
-        group = group_db[sample][0]
+        try: group = group_db[sample][0]
+        except: group = '1'
         if group not in groups:
             groups.append(group)
             
@@ -4722,26 +5289,40 @@ def multipleSubPlots(filename,uids,SubPlotType='column'):
         else:
             cm = pylab.cm.get_cmap('gist_rainbow') #gist_ncar
         for i in range(len(groups)):
-            color_list.append(cm(1.*i/len(groups)))  # color will now be an RGBA tuple
+            color_list.append(cm(1.*i/(len(groups)-1))) # color will now be an RGBA tuple
             
     for i in range(len(matrix)):
-        ax = pylab.subplot(5,1,1+i)
+        ax = pylab.subplot(n,1,1+i)
         OY = matrix[i]
         pylab.xlim(0,len(OY))
         pylab.subplots_adjust(right=0.85)
         ind = np.arange(len(OY))
+        index_list = []
+        v_list = []
+        colors_list = []
         if SubPlotType=='column':
             index=-1
             for v in OY:
                 index+=1
-                group = group_db[column_header[index]][0]
-                pylab.bar(index, v,edgecolor='black',linewidth=0,color=color_list[groups.index(group)])
+                try: group = group_db[column_header[index]][0]
+                except: group = '1'
+                index_list.append(index)
+                v_list.append(v)
+                colors_list.append(color_list[groups.index(group)])
+                #pylab.bar(index, v,edgecolor='black',linewidth=0,color=color_list[groups.index(group)])
                 width = .35
             #print i ,row_header[i]
+            print 1
+            barlist = pylab.bar(index_list, v_list,edgecolor='black',linewidth=0)
+            ci = 0
+
+            for cs in barlist:
+                barlist[ci].set_color(colors_list[ci])
+                ci+=1
         if SubPlotType=='plot':
             pylab.plot(x,y)
 
-        ax.text(matrix.shape[1]-0.5, i, '  '+row_header[i],fontsize=16)
+        ax.text(matrix.shape[1]-0.5, i, '  '+row_header[i],fontsize=8)
         
         fig.autofmt_xdate()
         pylab.subplots_adjust(hspace = .001)
@@ -4756,7 +5337,9 @@ def multipleSubPlots(filename,uids,SubPlotType='column'):
         #pylab.setp(xtickNames, rotation=90, fontsize=10)
         
     #pylab.show()
-    pylab.savefig(filename[:-4]+'-'+str_uids+'.pdf')
+    if len(str_uids)>50:
+        str_uids = str_uids[:50]
+    pylab.savefig(filename[:-4]+'-1'+str_uids+'.pdf')
 
 def simpleTranspose(filename):
     fn = filepath(filename)
@@ -5226,19 +5809,29 @@ def countIntronsExons(filename):
             
     print len(exon_db)+1, len(intron_db)+1
              
-def importGeneList(gene_list_file):
+def importGeneList(gene_list_file,n=20):
     genesets=[]
     genes=[]
     for line in open(gene_list_file,'rU').xreadlines():
         gene = line.rstrip()
+        gene = string.split(gene,'\t')[0]
         genes.append(gene)
-        if len(genes)==5:
+        if len(genes)==n:
             genesets.append(genes)
             genes=[]
-    if len(genes)>0 and len(genes)<6:
-        genes+=(5-len(genes))*[gene]
+    if len(genes)>0 and len(genes)<(n+1):
+        genes+=(n-len(genes))*[gene]
         genesets.append(genes)
     return genesets
+
+def simpleListImport(filename):
+    genesets=[]
+    genes=[]
+    for line in open(filename,'rU').xreadlines():
+        gene = line.rstrip()
+        gene = string.split(gene,'\t')[0]
+        genes.append(gene)
+    return genes
             
 def customClean(filename):
     fn = filepath(filename)
@@ -5280,7 +5873,7 @@ def MakeJunctionFasta(filename):
     ea.close()
     
 def ToppGeneFilter(filename):
-    import gene_associations, OBO_import
+    import gene_associations; from import_scripts import OBO_import
     gene_to_symbol = gene_associations.getGeneToUid('Hs',('hide','Ensembl-Symbol'))
     symbol_to_gene = OBO_import.swapKeyValues(gene_to_symbol)
     
@@ -5700,25 +6293,67 @@ def simpleCombine(folder):
     
     ea.close()
     
-def simpleCombineFiles(folder):
-    filename = folder+'/combined/combined.txt'
+def simpleCombineFiles(folder, elite_output=True, uniqueOnly=False):
+    filename = folder + '/combined/combined.txt'
     ea = export.ExportFile(filename)
     files = UI.read_directory(folder)
-    firstRow=True
+    unique_entries = []
+    firstRow = True
     for file in files:
         if '.txt' in file:
-            fn = filepath(folder+'/'+file)
-            firstRow=True
-            for line in open(fn,'rU').xreadlines():
+            fn = filepath(folder + '/' + file)
+            firstRow = True
+            for line in open(fn, 'rU').xreadlines():
                 data = cleanUpLine(line)
-                t = string.split(data,'\t')
-                if firstRow:
+                t = string.split(data, '\t')
+                if elite_output:
+                    if firstRow:
+                        t = 'UID\tSystemCode\tCategory'
+                        ea.write(t + '\n')
+                        firstRow = False
+                    elif uniqueOnly:
+                        if t[0] not in unique_entries:
+                            ea.write(t[0] + '\t' + t[0] + '\t\n')
+                        unique_entries.append(t[0])
+                    else:
+                        ea.write(string.join([string.split(t[0], '|')[0], 'Ae', string.replace(file[:-4], 'PSI.', '')], '\t') + '\n')
+                elif firstRow:
                     t.append('Comparison')
-                    ea.write(string.join(t,'\t')+'\n')
+                    ea.write(string.join(t, '\t') + '\n')
                     firstRow = False
                 else:
                     t.append(file[:-4])
-                    ea.write(string.join(t,'\t')+'\n')
+                    ea.write(string.join(t, '\t') + '\n')
+    ea.close()
+    
+def simpleCombineBedFiles(folder):
+    filename = folder + '/combined/annotations.bed'
+    ea = export.ExportFile(filename)
+    files = UI.read_directory(folder)
+    for file in files:
+        if '.bed' in file:
+            fn = filepath(folder + '/' + file)
+            for line in open(fn, 'rU').xreadlines():
+                data = cleanUpLine(line)
+                t = string.split(data, '\t')
+                t[3]+=';'+file[5:-4]
+                ea.write(string.join(t, '\t') + '\n')
+    ea.close()
+    
+def advancedCombineBedFiles(folder):
+    filename = folder + '/combined/annotations.bed'
+    ea = export.ExportFile(filename)
+    files = UI.read_directory(folder)
+    annotations=[]
+    for file in files:
+        if '.bed' in file:
+            fn = filepath(folder + '/' + file)
+            for line in open(fn, 'rU').xreadlines():
+                data = cleanUpLine(line)
+                t = string.split(data, '\t')
+                t[3]+=';'+file[5:-4]
+                uid = (t[0],int(t[1]),int(t[2]))
+                #ea.write(string.join(t, '\t') + '\n')
     ea.close()
                     
 def evaluateMultiLinRegulatoryStructure(all_genes_TPM,MarkerFinder,SignatureGenes,state,query=None):
@@ -5957,7 +6592,7 @@ def filterPSIValues(filename):
     header = True
     rows=0
     filtered=0
-    new_file = filename[:-4]+'-99p.txt'
+    new_file = filename[:-4]+'-75p.txt'
     new_file_clust = new_file[:-4]+'-clustID.txt'
     ea = export.ExportFile(new_file)
     eac = export.ExportFile(new_file_clust)
@@ -5969,7 +6604,7 @@ def filterPSIValues(filename):
             header = False
             t = [t[1]]+t[8:]
             header_length = len(t)-1
-            minimum_values_present = int(header_length)-1
+            minimum_values_present = int(0.75*int(header_length))
             not_detected = header_length-minimum_values_present
             new_line = string.join(t,'\t')+'\n'
             ea.write(new_line)
@@ -5989,7 +6624,7 @@ def filterPSIValues(filename):
     print rows, filtered
     ea.close()
     eac.close()
-    removeRedundantCluster(new_file,new_file_clust)
+    #removeRedundantCluster(new_file,new_file_clust)
 
 def removeRedundantCluster(filename,clusterID_file):
     from scipy import stats
@@ -6099,30 +6734,68 @@ def convertToGOElite(folder):
                     else: up_count+=1
             ea.close()
             print file,'\t',gene_count,'\t',up_count,'\t',down_count
-
-def compareEventLists(folder):
+            
+def geneExpressionSummary(folder):
     import collections
     event_db = collections.OrderedDict()
     groups_list=['']
     files = UI.read_directory(folder)
     for file in files:
-        if '.txt' in file and 'PSI.' in file:
+        if '.txt' in file and 'GE.' in file:
             ls=[]
             event_db[file[:-4]]=ls
             groups_list.append(file[:-4])
             fn = folder+'/'+file
             firstLine = True
             for line in open(fn,'rU').xreadlines():
-                if firstLine:
-                    firstLine= False
-                    continue
                 data = line.rstrip()
                 t = string.split(data,'\t')
-                if 'U2AF1-like' in file:
-                    if t[1] == "inclusion":
-                        ls.append((t[0],t[1]))
+                if firstLine:
+                    fold_index = t.index('LogFold')
+                    firstLine= False
+                    continue
+                uid = t[0]
+                if float(t[fold_index])>0:
+                    fold_dir = 1
                 else:
-                    ls.append((t[0],t[1]))
+                    fold_dir = -1
+                ls.append((uid,fold_dir))
+    for file in event_db:
+        print file,'\t',len(event_db[file])
+                    
+def compareEventLists(folder):
+    import collections
+    event_db = collections.OrderedDict()
+    groups_list=['']
+    files = UI.read_directory(folder)
+    file_headers = {}
+    for file in files:
+        if '.txt' in file and 'PSI.' in file:
+            ls={}
+            event_db[file[:-4]]=ls
+            groups_list.append(file[:-4])
+            fn = folder+'/'+file
+            firstLine = True
+            for line in open(fn,'rU').xreadlines():
+                data = line.rstrip()
+                t = string.split(data,'\t')
+                if firstLine:
+                    file_headers[file[:-4]] = t ### Store the headers
+                    cid = t.index('ClusterID')
+                    try: event_index = t.index('Event-Direction')
+                    except:
+                        try: event_index = t.index('Inclusion-Junction') ### legacy
+                        except: print file, 'Event-Direction error';sys.exit()
+                    firstLine= False
+                    continue
+                uid = t[0]
+                uid = string.split(uid,'|')[0]
+                #uid = t[cid]
+                if 'U2AF1-l' in file or 'U2AF1-E' in file:
+                    if t[2] == "inclusion":
+                        ls[(uid,t[event_index])]=t ### Keep the event data for output
+                else:
+                    ls[(uid,t[event_index])]=t ### Keep the event data for output
 
     def convertEvents(events):
         opposite_events=[]
@@ -6137,71 +6810,1244 @@ def compareEventLists(folder):
     ea1 = export.ExportFile(folder+'/overlaps-same-direction.txt')
     ea2 = export.ExportFile(folder+'/overlaps-opposite-direction.txt')
     ea3 = export.ExportFile(folder+'/concordance.txt')
+    #ea4 = export.ExportFile(folder+'/overlap-same-direction-events.txt')
     ea1.write(string.join(groups_list,'\t')+'\n')
     ea2.write(string.join(groups_list,'\t')+'\n')
     ea3.write(string.join(groups_list,'\t')+'\n')
+    
     comparison_db={}
+    best_hits={}
     for comparison1 in event_db:
         events1 = event_db[comparison1]
         hits1=[comparison1]
         hits2=[comparison1]
         hits3=[comparison1]
+        best_hits[comparison1]=[]
         for comparison2 in event_db:
             events2 = event_db[comparison2]
             events3 = convertEvents(events2)
-            overlap = len(set(events1).intersection(events2))
-            inverse_overlap = len(set(events1).intersection(events3))
-            min_events1 = min([len(events1),len(events2)])
+            overlapping_events = list(set(events1).intersection(events2))                  
+            overlap = len(overlapping_events)
+            inverse_overlap = len(set(events1).intersection(events3)) ### Get opposite events
+            ### Calculate ratios based on the size of the smaller set
+            min_events1 = min([len(events1),len(events2)]) 
             min_events2 = min([len(events1),len(events3)])
             denom = overlap+inverse_overlap
             if denom == 0: denom = 0.00001
             #comparison_db[comparison1,comparison2]=overlap
-            hits1.append(str((1.00*overlap)/min_events1))
-            hits2.append(str((1.00*inverse_overlap)/min_events1))
-            hits3.append(str(1.00*overlap/denom)+'|'+str(1.00*inverse_overlap/denom))
+            if min_events1 == 0: min_events1 = 1
+            if (overlap+inverse_overlap)<20:
+                hits1.append('0.5')
+                hits2.append('0.5')
+                hits3.append('0.5|0.5')
+            else:
+                hits1.append(str((1.00*overlap)/min_events1))
+                hits2.append(str((1.00*inverse_overlap)/min_events1))
+                hits3.append(str(1.00*overlap/denom)+'|'+str(1.00*inverse_overlap/denom)+':'+str(overlap+inverse_overlap))
+                if 'Leu' not in comparison2:
+                    comp_name = string.split(comparison2,'_vs')[0]
+                    best_hits[comparison1].append([abs(1.00*overlap/denom),'cor',comp_name])
+                    best_hits[comparison1].append([abs(1.00*inverse_overlap/denom),'anti',comp_name])
+            if comparison1 != comparison2:
+                if len(overlapping_events)>0:
+                    #ea4.write(string.join(['UID',comparison1]+file_headers[comparison1]+[comparison2]+file_headers[comparison2],'\t')+'\n')
+                    pass
+                overlapping_events.sort()
+                for event in overlapping_events:
+                    vals = string.join([event[0],comparison1]+event_db[comparison1][event]+[comparison2]+event_db[comparison2][event],'\t')
+                    #ea4.write(vals+'\n')
+                    pass
         ea1.write(string.join(hits1,'\t')+'\n')
         ea2.write(string.join(hits2,'\t')+'\n')
         ea3.write(string.join(hits3,'\t')+'\n')
     ea1.close()
     ea2.close()
     ea3.close()
+    #ea4.close()
+    for comparison in best_hits:
+        best_hits[comparison].sort()
+        best_hits[comparison].reverse()
+        hits = best_hits[comparison][:10]
+        hits2=[]
+        for (score,dir,comp) in hits:
+            h = str(score)[:4]+'|'+dir+'|'+comp
+            hits2.append(h)
+        print comparison,'\t',string.join(hits2,', ')
      
-def convertGroupsToBinaryMatrix(groups_file,sample_order):
+def convertGroupsToBinaryMatrix(groups_file,sample_order,cellHarmony=False):
     eo = export.ExportFile(groups_file[:-4]+'-matrix.txt')
+    print groups_file[:-4]+'-matrix.txt'
     firstRow=True
     samples = []
     ### Import a file with the sample names in the groups file in the correct order
     for line in open(sample_order,'rU').xreadlines():
         data = cleanUpLine(line)
         t = string.split(data,'\t')
-        samples.append(t[0])
-        
+        if 'row_clusters-flat' in t:
+            samples=[]
+            samples1 = t[2:]
+            for name in samples1:
+                if ':' in name:
+                    group,name = string.split(name,':')
+                samples.append(name)
+            if cellHarmony==False:
+                break
+        elif 'column_clusters-flat' in t and cellHarmony:
+            clusters = t[2:]
+        elif groups_file == sample_order:
+            samples.append(t[0])
+        elif firstRow:
+            samples = t[1:]
+            firstRow=False
+    
     ### Import a groups file
-    sample_groups = {}
+    import collections
+    sample_groups = collections.OrderedDict()
     for line in open(groups_file,'rU').xreadlines():
         data = cleanUpLine(line)
         t = string.split(data,'\t')
         sample, groupNum, groupName = t[:3]
-        if sample in samples:
-            si=samples.index(sample) ### Index of the sample
-            try: sample_groups[groupName][si] = '1' ### set that sample to 1
-            except Exception: sample_groups[groupName] = ['0']*len(samples)
+        if cellHarmony == False: ### JUST USE THE PROVIDED GROUPS FOR SAMPLES FOUND IN BOTH FILES
+            if sample in samples:
+                si=samples.index(sample) ### Index of the sample
+                try: sample_groups[groupName][si] = '1' ### set that sample to 1
+                except Exception:
+                    sample_groups[groupName] = ['0']*len(samples)
+                    sample_groups[groupName][si] = '1' ### set that sample to 1
+        else: ### JUST GRAB THE GROUP NAMES FOR THE SAMPLE GROUPS NOT THE SAMPES
+            sample_groups[groupNum]=groupName
+            
+    if cellHarmony:
+        i=0
+        for sample in samples1:
+            cluster = clusters[i]
+            group_name = sample_groups[cluster]
+            eo.write(sample+'\t'+cluster+'\t'+group_name+'\n')
+            i+=1
+        eo.close()
+        
+    else:
+        eo.write(string.join(['GroupName']+samples,'\t')+'\n')
+        for group in sample_groups:
+            eo.write(string.join([group]+sample_groups[group],'\t')+'\n')
+        eo.close()
+        
+def returnIntronJunctionRatio(counts_file,species = 'Mm'):
+    eo = export.ExportFile(counts_file[:-4]+'-intron-ratios.txt')
+    ### Import a groups file
+    header=True
+    prior_gene=[]
+    exon_junction_values=[]
+    intron_junction_values=[]
+    eoi = export.ExportFile(counts_file[:-4]+'-intron-ratios-gene.txt')
+    rows=0
+    import gene_associations
+    gene_to_symbol = gene_associations.getGeneToUid(species,('hide','Ensembl-Symbol'))
+    def logratio(list):
+        try: return list[0]/list[1]
+        except Exception: return 0
+    for line in open(counts_file,'rU').xreadlines():
+        data = cleanUpLine(line)
+        t = string.split(data,'\t')
+        junctionID = t[0]
+        if header:
+            eoi.write(line)
+            samples = t[1:]
+            #zero_ref =[0]*len(samples)
+            global_intron_ratios={}
+            i=0
+            for val in samples:
+                global_intron_ratios[i]=[]
+                i+=1
+            header = False
+            continue
+        else:
+            uid,coords = string.split(junctionID,'=')
+            genes = string.split(uid,':') ### can indicate trans-splicing
+            if len(genes)>2: trans_splicing = True
+            else: trans_splicing = False
+            coords = string.split(coords,':')[1]
+            coords = string.split(coords,'-')
+            coords = map(int,coords)
+            coord_diff = abs(coords[1]-coords[0])
+        #ENSMUSG00000027770:I23.1-E24.1=chr3:62470748-62470747
+        gene = string.split(junctionID,':')[0]
+        rows+=1
+        if rows == 1:
+            prior_gene = gene
+        if gene != prior_gene:
+            #print gene
+            ### merge all of the gene level counts for all samples
+            if len(intron_junction_values)==0:
+                #global_intron_ratios = [sum(value) for value in zip(*[global_intron_ratios,zero_ref])]
+                pass
+            else:
+                intron_junction_values_original = list(intron_junction_values)
+                exon_junction_values_original = list(exon_junction_values)
+                intron_junction_values = [sum(i) for i in zip(*intron_junction_values)]
+                exon_junction_values = [sum(i) for i in zip(*exon_junction_values)]
+                intron_ratios = [logratio(value) for value in zip(*[intron_junction_values,exon_junction_values])]
+                #if sum(intron_ratios)>3:
+
+                intron_ratios2=[]
+                if prior_gene in gene_to_symbol:
+                    symbol = gene_to_symbol[prior_gene][0]
+                else:
+                    symbol = prior_gene
+                i=0
+                #"""
+                if symbol == 'Pi4ka':
+                    print samples[482:487]
+                    for x in exon_junction_values_original:
+                        print x[482:487]
+                    print exon_junction_values[482:487]
+                    print intron_ratios[482:487]
+                #"""
+                for val in intron_ratios:
+                    if exon_junction_values[i]>9:
+                        if val>0:
+                            ### stringent requirement - make sure it's not just a few reads
+                            if intron_junction_values[i]>9: 
+                                intron_ratios2.append(val)
+                            else:
+                                intron_ratios2.append(0)
+                        else:
+                            intron_ratios2.append(0)
+                    else:
+                        """
+                        if val>0:
+                            print val
+                            print intron_junction_values
+                            print exon_junction_values;sys.exit()"""
+                        intron_ratios2.append('')
+                    i+=1
+
+                eoi.write(string.join([symbol]+map(str,intron_ratios2),'\t')+'\n')
+                i = 0
+                for val in intron_ratios:
+                    if exon_junction_values[i]!=0: ### Only consider values with a non-zero denominator
+                        global_intron_ratios[i].append(intron_ratios[i])
+                    i+=1
+
+            exon_junction_values = []
+            intron_junction_values = []
+            prior_gene = gene
+        values = map(float,t[1:])
+        if 'I' in junctionID and '_' not in junctionID and coord_diff==1 and trans_splicing == False:
+            intron_junction_values.append(values)
+            exon_junction_values.append(values)
+        elif trans_splicing == False:
+            exon_junction_values.append(values)
+    print rows, 'processed'
+
+    import numpy
+    i=0; global_intron_ratios_values=[]
+    for val in samples:
+        global_intron_ratios_values.append(100*numpy.mean(global_intron_ratios[i])) ### list of lists
+        i+=1
+        
+    eo.write(string.join(['UID']+samples,'\t')+'\n')
+    eo.write(string.join(['Global-Intron-Retention-Ratio']+map(str,global_intron_ratios_values),'\t')+'\n')
+    eo.close()
+    eoi.close()
+
+def convertSymbolLog(input_file,ensembl_symbol):
     
-    eo.write(string.join(['GroupName']+samples,'\t')+'\n')
-    for group in sample_groups:
-        eo.write(string.join([group]+sample_groups[group],'\t')+'\n')
+    gene_symbol_db={}
+    for line in open(ensembl_symbol,'rU').xreadlines():
+        data = cleanUpLine(line)
+        ensembl,symbol = string.split(data,'\t')
+        gene_symbol_db[ensembl]=symbol
+    convert = False
+    eo = export.ExportFile(input_file[:-4]+'-log2.txt')
+    header=0
+    added_symbols=[]
+    not_found=[]
+    for line in open(input_file,'rU').xreadlines():
+        data = cleanUpLine(line)
+        values = string.split(data,'\t')
+        gene = values[0]
+        if header == 0:
+            #eo.write(line)
+            data = cleanUpLine(line)
+            headers = []
+            values = string.split(data,'\t')
+            for v in values:
+                if "exp." in v:
+                    headers.append(string.split(v,'.exp.')[0])
+                else:
+                    headers.append(v)
+            eo.write(string.join(headers,'\t')+'\n')
+        header +=1
+        if gene in gene_symbol_db:
+            symbol = gene_symbol_db[gene]
+            if symbol not in added_symbols: 
+                added_symbols.append(symbol)
+                values = map(lambda x: math.log(float(x)+1,2),values[1:])
+                if max(values)> 0.5:
+                    values = map(lambda x: str(x)[:5],values)
+                    eo.write(string.join([symbol]+values,'\t')+'\n')
+        elif convert==False and header>1:
+            values = map(lambda x: math.log(float(x)+1,2),values[1:])
+            if max(values)> 0.5:
+                values = map(lambda x: str(x)[:5],values)
+                eo.write(string.join([gene]+values,'\t')+'\n')
+        else:
+            not_found.append(gene)
+    print len(not_found),not_found[:10]
+
+    eo.close()
+
+def convertXenaBrowserIsoformDataToStandardRatios(input_file):
+    eo = open(input_file[:-4]+'-log2.txt','w')
+    header=0
+    count=0
+    for line in open(input_file,'rU').xreadlines():
+        data = cleanUpLine(line)
+        values = string.split(data,'\t')
+        uid = string.split(values[0],'.')[0]
+        isoform = values[0]
+        if header == 0:
+            eo.write(line)
+            header +=1
+        else:
+            values = map(lambda x: math.pow(2,float(x)),values[1:]) # convert list out of log space
+            values = map(lambda x: math.log(float(x)+1,2),values) # convert to value+1 log2
+            def percentExp(x):
+                if x>1: return 1
+                else: return 0
+            counts = map(lambda x: percentExp(x),values) # find how many values > 1
+            if sum(counts)/(len(values)*1.000)>0.1: # only write out genes with >10% of values > 1
+                values = map(str,values)
+                values = string.join([uid]+values,'\t')
+                eo.write(values+'\n')
+                count+=1
+    eo.close()
+    print count,'genes written'
+    
+def outputForGOElite(folds_dir):
+    
+    matrix, column_header, row_header, dataset_name, group_db = importData(folds_dir,Normalize=False)
+    matrix = zip(*matrix) ### transpose
+    
+    ci=0
+    root_dir = findParentDir(folds_dir)
+    for group_data in matrix:
+        group_name = column_header[ci]
+        eo = export.ExportFile(root_dir+'/folds/'+group_name+'.txt')
+        gi=0
+        eo.write('geneID'+'\tSy\t'+'log2-fold'+'\n')
+        for fold in group_data:
+            gene = row_header[gi]
+            if fold>0:
+                eo.write(gene+'\tSy\t'+str(fold)+'\n')
+            gi+=1
+        eo.close()
+        ci+=1
+    
+def transposeMatrix(input_file):
+    arrays=[]
+    eo = export.ExportFile(input_file[:-4]+'-transposed.txt')
+    for line in open(input_file,'rU').xreadlines():
+        data = cleanUpLine(line)
+        values = string.split(data,'\t')
+        arrays.append(values)
+    t_arrays = zip(*arrays)
+    for t in t_arrays:
+        eo.write(string.join(t,'\t')+'\n')
+    eo.close()
+
+def simpleStatsSummary(input_file):
+    cluster_counts={}
+    header=True
+    for line in open(input_file,'rU').xreadlines():
+        data = cleanUpLine(line)
+        if header:
+            header = False
+        else:
+            sample,cluster,counts = string.split(data,'\t')
+            try: cluster_counts[cluster].append(float(counts))
+            except Exception: cluster_counts[cluster]=[float(counts)]
+    
+    for cluster in cluster_counts:
+        avg = statistics.avg(cluster_counts[cluster])
+        stdev = statistics.stdev(cluster_counts[cluster])
+        print cluster+'\t'+str(avg)+'\t'+str(stdev)
+        
+def latteralMerge(file1, file2):
+    import collections
+    cluster_db = collections.OrderedDict()
+    eo = export.ExportFile(file2[:-4]+'combined.txt')
+    for line in open(file1,'rU').xreadlines():
+        data = cleanUpLine(line)
+        t = string.split(data,'\t')
+        cluster_db[t[0]]=t
+    for line in open(file2,'rU').xreadlines():
+        data = cleanUpLine(line)
+        t = string.split(data,'\t')
+        if t[0] in cluster_db:
+            t1=cluster_db[t[0]]
+            eo.write(string.join(t1+t[2:],'\t')+'\n')
     eo.close()
     
+def removeMarkerFinderDoublets(heatmap_file,diff=1):
+    matrix, column_header, row_header, dataset_name, group_db, priorColumnClusters, priorRowClusters = remoteImportData(heatmap_file)
+        
+    priorRowClusters.reverse()
+    if len(priorColumnClusters)==0:
+        for c in column_header:
+            cluster = string.split(c,':')[0]
+            priorColumnClusters.append(cluster)
+        for r in row_header:
+            cluster = string.split(r,':')[0]
+            priorRowClusters.append(cluster)
+
+    import collections
+    cluster_db = collections.OrderedDict()
+    i=0
+    for cluster in priorRowClusters:
+        try: cluster_db[cluster].append(matrix[i])
+        except: cluster_db[cluster] = [matrix[i]]
+        i+=1
+    
+    transposed_data_matrix=[]
+    clusters=[]
+    for cluster in cluster_db:
+        cluster_cell_means = numpy.mean(cluster_db[cluster],axis=0)
+        cluster_db[cluster] = cluster_cell_means
+        transposed_data_matrix.append(cluster_cell_means)
+        if cluster not in clusters:
+            clusters.append(cluster)
+    transposed_data_matrix = zip(*transposed_data_matrix)
+    
+    i=0
+    cell_max_scores=[]
+    cell_max_score_db = collections.OrderedDict()
+
+    for cell_scores in transposed_data_matrix:
+        cluster = priorColumnClusters[i]
+        cell = column_header[i]
+        ci = clusters.index(cluster)
+        #print ci, cell, cluster, cell_scores;sys.exit()
+        cell_state_score = cell_scores[ci] ### This is the score for that cell for it's assigned MarkerFinder cluster
+        alternate_state_scores=[]
+        for score in cell_scores:
+            if score != cell_state_score:
+                alternate_state_scores.append(score)
+        alt_max_score = max(alternate_state_scores)
+        alt_sum_score = sum(alternate_state_scores)
+        cell_max_scores.append([cell_state_score,alt_max_score,alt_sum_score]) ### max and secondary max score - max for the cell-state should be greater than secondary max
+        try: cell_max_score_db[cluster].append(([cell_state_score,alt_max_score,alt_sum_score]))
+        except: cell_max_score_db[cluster] = [[cell_state_score,alt_max_score,alt_sum_score]]
+        i+=1
+    
+    
+    for cluster in cell_max_score_db:
+        cluster_cell_means = numpy.median(cell_max_score_db[cluster],axis=0)
+        cell_max_score_db[cluster] = cluster_cell_means ### This is the cell-state mean score for all cells in that cluster and the alternative max mean score (difference gives you the threshold for detecting double)
+    i=0
+    print len(cell_max_scores)
+    keep=['row_clusters-flat']
+    keep_alt=['row_clusters-flat']
+    remove = ['row_clusters-flat']
+    remove_alt = ['row_clusters-flat']
+    min_val = 1000
+    for (cell_score,alt_score,alt_sum) in cell_max_scores:
+        cluster = priorColumnClusters[i]
+        cell = column_header[i]
+        ref_max, ref_alt, ref_sum = cell_max_score_db[cluster]
+        ci = clusters.index(cluster)
+        ref_diff= math.pow(2,(ref_max-ref_alt))*diff #1.1
+        ref_alt = math.pow(2,(ref_alt))
+        cell_diff = math.pow(2,(cell_score-alt_score))
+        cell_score = math.pow(2,cell_score)
+        if cell_diff<min_val: min_val = cell_diff
+        if cell_diff>ref_diff and cell_diff>diff: #cell_score cutoff removes some, but cell_diff is more crucial
+                #if alt_sum<cell_score:
+                assignment=0 #1.2
+                keep.append(cell)
+                try: keep_alt.append(string.split(cell,':')[1]) ### if prefix added
+                except Exception:
+                    keep_alt.append(cell)
+        else:
+            remove.append(cell)
+            try: remove_alt.append(string.split(cell,':')[1])
+            except Exception: remove_alt.append(cell)
+            assignment=1
+
+        #print assignment
+        i+=1
+    print min_val
+    print len(keep), len(remove)
+    from import_scripts import sampleIndexSelection
+    input_file=heatmap_file
+    output_file = heatmap_file[:-4]+'-Singlets.txt'
+    try: sampleIndexSelection.filterFile(input_file,output_file,keep)
+    except: sampleIndexSelection.filterFile(input_file,output_file,keep_alt)
+
+    output_file = heatmap_file[:-4]+'-Multiplets.txt'
+    try: sampleIndexSelection.filterFile(input_file,output_file,remove)
+    except: sampleIndexSelection.filterFile(input_file,output_file,remove_alt)
+    
+def exportTFcorrelations(filename,TF_file,threshold,anticorrelation=False):
+    
+    eo = export.ExportFile(filename[:-4]+'-TF-correlations.txt')
+    TFs = simpleListImport(TF_file)
+    x, column_header, row_header, dataset_name, group_db = importData(filename)
+    
+    ### For methylation data or other data with redundant signatures, remove these and only report the first one
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore",category=RuntimeWarning) ### hides import warnings
+        D1 = numpy.corrcoef(x)
+    i=0
+    correlation_pairs=[]
+    for score_ls in D1:
+        k=0
+        for v in score_ls:
+            if str(v)!='nan':
+                if k!=i:
+                    #print row_header[i], row_header[k], v
+                    if row_header[i] in TFs or row_header[k] in TFs:
+                        #correlation_pairs.append([row_header[i],row_header[k],v])
+                        if anticorrelation:
+                            if v<(-1*threshold):
+                                eo.write(row_header[i]+'\t'+row_header[k]+'\t'+str(v)+'\n')
+                        elif v<(-1*threshold) or v>threshold:
+                            eo.write(row_header[i]+'\t'+row_header[k]+'\t'+str(v)+'\n')
+            k+=1    
+        i+=1
+    eo.close()
+    
+def TFisoformImport(filename):
+    isoform_db = {}
+    for line in open(filename, 'rU').xreadlines():
+        data = line.rstrip()
+        trans, prot, gene, symbol, uid, uid2, uid3 = string.split(data, '\t')
+        isoform_db[trans] = (symbol, prot)
+
+    return isoform_db
+
+def exportIntraTFIsoformCorrelations(filename, TF_file, threshold, anticorrelation=False):
+    eo = export.ExportFile(filename[:-4] + '-TF-correlations.txt')
+    isoform_db = TFisoformImport(TF_file)
+    x, column_header, row_header, dataset_name, group_db = importData(filename)
+    ### For methylation data or other data with redundant signatures, remove these and only report the first one
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', category=RuntimeWarning)
+        D1 = numpy.corrcoef(x)
+    i = 0
+    correlation_pairs = []
+    for score_ls in D1:
+        k = 0
+        for v in score_ls:
+            if str(v) != 'nan':
+                if k != i:
+                    if row_header[i] in isoform_db or row_header[k] in isoform_db:
+                        try:
+                            gene1, prot1 = isoform_db[row_header[i]]
+                            gene2, prot2 = isoform_db[row_header[k]]
+                            if gene1 == gene2:
+                                if anticorrelation:
+                                    if v < -1 * threshold:
+                                        eo.write(row_header[i] + '\t' + row_header[k] + '\t' + str(v) + '\n')
+                                elif v < -1 * threshold or v > threshold:
+                                    eo.write(row_header[i] + '\t' + row_header[k] + '\t' + str(v) + '\n')
+                        except:
+                            pass
+            k += 1
+        i += 1
+    eo.close()
+
+def PSIfilterAndImpute(folder):
+    ### Filter a PSI file and impute missing values based on neighbors
+    files = UI.read_directory(folder)
+    for file in files:
+        filename = folder + '/' + file
+        if '.txt' in file:
+            eo = export.ExportFile(filename[:-4] + '-impute.txt')
+            header = True
+            count = 0
+            for line in open(filename, 'rU').xreadlines():
+                data = cleanUpLine(line)
+                values = string.split(data, '\t')
+                t0 = values[1]
+                tl = values[(-1)]
+                vs = values[1:]
+                if header:
+                    header = False
+                    eo.write(line)
+                elif len(vs) == len(vs) - vs.count(''):
+                    sum_val = sum(map(float, vs)) / len(vs)
+                    if sum_val != 1 and sum_val != 0:
+                        eo.write(line)
+                        count += 1
+                elif len(vs) - vs.count('') > len(vs) - 3:
+                    new_values = []
+                    i = 0
+                    for v in vs:
+                        if v=='':
+                            if i==0: ### if the first element is null
+                                try: new_values.append((float(vs[i+1])+float(tl))/2)
+                                except: new_values.append(None) ### If two nulls occur in a row
+                            elif i==len(vs)-1: ### if the last element is null
+                                try: new_values.append((float(vs[i-1])+float(t0))/2)
+                                except: new_values.append(None) ### If two nulls occur in a row
+                            else: ### if the another element is null
+                                try: new_values.append((float(vs[i-1])+float(vs[i+1]))/2)
+                                except: new_values.append(None) ### If two nulls occur in a row
+                        else:
+                            new_values.append(v)
+                        i += 1
+
+                    if None not in new_values:
+                        sum_val = sum(map(float, new_values)) / len(new_values)
+                        if sum_val != 1 and sum_val != 0:
+                            eo.write(string.join([values[0]] + map(str, new_values), '\t') + '\n')
+                            count += 1
+            eo.close()
+            print count, '\t', fileg
+
+def summarizePSIresults(folder, TF_file):
+    #TFs = simpleListImport(TF_file)
+    ### Import PSI results and report number of impacted TFs
+    files = UI.read_directory(folder)
+    #eo = export.ExportFile(folder + '/TF_events.txt')
+    all_TFs = []
+    for file in files:
+        TFs_in_file = []
+        filename = folder + '/' + file
+        if '.txt' in file and 'PSI.' in file:
+            header = True
+            count = 0
+            header = True
+            for line in open(filename, 'rU').xreadlines():
+                if header:
+                    header = False
+                else:
+                    data = cleanUpLine(line)
+                    t = string.split(data, '\t')
+                    symbol = string.split(t[0], ':')[0]
+                    dPSI = abs(float(t[(-5)]))
+                    if symbol=='HOXA1':
+                        """
+                        if symbol in TFs and symbol not in TFs_in_file and dPSI > 0.2:
+                            eo.write(string.join(t + [file], '\t') + '\n')
+                            TFs_in_file.append(symbol)
+                            if symbol not in all_TFs:
+                                all_TFs.append(symbol)
+                            count += 1
+                        """
+                        print file+"\t"+t[-5]+"\t"+t[-4]+"\t"+t[0]
+            ##print file, count, len(all_TFs), string.join(TFs_in_file, ',')
+
+    #eo.close()
+
+def convertPSICoordinatesToBED(folder):
+    files = UI.read_directory(folder)
+    eo = export.ExportFile(folder + '/combined.bed')
+    all_TFs = []
+    for file in files:
+        TFs_in_file = []
+        filename = folder + '/' + file
+        if '.txt' in file:
+            header = True
+            count = 0
+            header = True
+            for line in open(filename, 'rU').xreadlines():
+                if header:
+                    header = False
+                else:
+                    data = cleanUpLine(line)
+                    t = string.split(data, '\t')
+                    symbol = string.split(t[0], ':')[0]
+                    try:
+                        coordinates = t[7]
+                    except:
+                        print t
+                        sys.exit()
+                    else:
+                        j1, j2 = string.split(coordinates, '|')
+                        c1a, c1b = map(int, string.split(j1.split(':')[1], '-'))
+                        strand = '+'
+                        if c1a > c1b:
+                            c1a, c1b = c1b, c1a
+                            strand = '-'
+                        c2a, c2b = map(int, string.split(j2.split(':')[1], '-'))
+                        if c2a > c2b:
+                            c2a, c2b = c2b, c2a
+                        chr = string.split(coordinates, ':')[0]
+                        uid = string.replace(t[0], ':', '__')
+                        eo.write(string.join([chr, str(c1a), str(c1b), uid + '--' + file, strand, str(c1a), str(c1b), '0'], '\t') + '\n')
+                        eo.write(string.join([chr, str(c2a), str(c2b), uid + '--' + file, strand, str(c2a), str(c2b), '0'], '\t') + '\n')
+    eo.close()
+
+def convertPSIConservedCoordinatesToBED(Mm_Ba_coordinates, Ba_events):
+    if 'Baboon' in Mm_Ba_coordinates:
+            equivalencies={'Heart':['Heart'],
+                   'Kidney':['Kidney-cortex','Kidney-medulla'],
+                   'WFAT':['White-adipose-pericardial','White-adipose-mesenteric','White-adipose-subcutaneous','Omental-fat'],
+                   'BFAT':['White-adipose-pericardial','White-adipose-mesenteric','White-adipose-subcutaneous','Omental-fat'],
+                   'Lung':['Lungs'],
+                   'Cere':['Cerebellum','Ventromedial-hypothalamus','Habenula','Pons','Pineal-gland','Visual-cortex','Lateral-globus-pallidus',
+                           'Paraventricular-nuclei','Arcuate-nucleus','Suprachiasmatic-nuclei','Putamen','Optic-nerve-head', 'Medial-globus-pallidus',
+                           'Amygdala','Prefontal-cortex','Dorsomedial-hypothalamus'],
+                   'BS':['Cerebellum','Ventromedial-hypothalamus','Habenula','Pons','Pineal-gland','Visual-cortex','Lateral-globus-pallidus',
+                           'Paraventricular-nuclei','Arcuate-nucleus','Suprachiasmatic-nuclei','Putamen','Optic-nerve-head', 'Medial-globus-pallidus',
+                           'Amygdala','Prefontal-cortex','Dorsomedial-hypothalamus'],
+                   'Hypo':['Cerebellum','Ventromedial-hypothalamus','Habenula','Pons','Pineal-gland','Visual-cortex','Lateral-globus-pallidus',
+                           'Paraventricular-nuclei','Arcuate-nucleus','Suprachiasmatic-nuclei','Putamen','Optic-nerve-head', 'Medial-globus-pallidus',
+                           'Amygdala','Prefontal-cortex','Dorsomedial-hypothalamus'],
+                   'Adrenal':['Adrenal-cortex','Adrenal-medulla'],
+                   'SM':['Muscle-gastrocnemian','Muscle-abdominal'],
+                   'Liver':['Liver'],
+                    }
+    else:
+            equivalencies={'Heart':['Heart'],
+                   'Kidney':['Kidney','Kidney'],
+                   'WFAT':['WFAT'],
+                   'BFAT':['BFAT'],
+                   'Lung':['Lungs'],
+                   'Adrenal':['Adrenal'],
+                   'Liver':['Liver'],
+                    }
+    eo = export.ExportFile(Mm_Ba_coordinates[:-4] + '-matched.txt')
+    eo2 = export.ExportFile(Mm_Ba_coordinates[:-4] + '-matrix.txt')
+    mouse_events = {}
+    baboon_events = {}
+    baboon_corridinates = {}
+    ### This mouse circadian events file has been lifted over to baboon coordinates
+    countX = 0
+    for line in open(Mm_Ba_coordinates, 'rU').xreadlines():
+        data = cleanUpLine(line)
+        values = string.split(data, '\t')
+        chr, c1, c2, event, strand, null, null, null = values
+        event = string.replace(event, '__', ':')
+        event, tissue = event.split('--')
+        junctions = string.split(event, ':')[1:]
+        junctions = string.join(junctions, ':')
+        junctions = string.split(junctions, '|')
+        junctions.sort() ### make a unique event
+        junctions = string.join(junctions, '|')
+        symbol = string.split(event, ':')[0]
+        event = symbol + ':' + junctions
+        countX += 1
+        tissue = string.replace(tissue, '_event_annot_file.txt', '')
+        tissue = string.replace(tissue, 'PSI.', '')
+        tissue = string.replace(tissue, '_Mm', '')
+        junction = chr + ':' + c2 + '-' + c1
+        alt_junction1 = chr + ':' + str(int(c2) + 1) + '-' + str(int(c1) + 1)
+        alt_junction2 = chr + ':' + str(int(c2) - 1) + '-' + str(int(c1) - 1)
+        try:
+            mouse_events[junction].append([event, tissue])
+        except:
+            mouse_events[junction] = [[event, tissue]]
+        else:
+            try:
+                mouse_events[alt_junction1].append([event, tissue])
+            except:
+                mouse_events[alt_junction1] = [[event, tissue]]
+            else:
+                try:
+                    mouse_events[alt_junction2].append([event, tissue])
+                except:
+                    mouse_events[alt_junction2] = [[event, tissue]]
+                else:
+                    junction = chr + ':' + c1 + '-' + c2
+                    alt_junction1 = chr + ':' + str(int(c1) + 1) + '-' + str(int(c2) + 1)
+                    alt_junction2 = chr + ':' + str(int(c1) - 1) + '-' + str(int(c2) - 1)
+                    try:
+                        mouse_events[junction].append([event, tissue])
+                    except:
+                        mouse_events[junction] = [[event, tissue]]
+
+                try:
+                    mouse_events[alt_junction1].append([event, tissue])
+                except:
+                    mouse_events[alt_junction1] = [[event, tissue]]
+
+            try:
+                mouse_events[alt_junction2].append([event, tissue])
+            except:
+                mouse_events[alt_junction2] = [[event, tissue]]
+
+    for line in open(Ba_events, 'rU').xreadlines():
+        data = cleanUpLine(line)
+        values = string.split(data, '\t')
+        event, tissue_num, tissues, coordinates = values
+        junctions = string.split(event, ':')[1:]
+        junctions = string.join(junctions, ':')
+        junctions = string.split(junctions, '|')
+        junctions.sort()
+        junctions = string.join(junctions, '|')
+        symbol = string.split(event, ':')[0]
+        event = symbol + ':' + junctions
+        baboon_corridinates[event] = coordinates
+        try:
+            j1, j2 = string.split(coordinates, '|')
+        except:
+            continue
+        else:
+            tissues = tissues.split('|')
+            try:
+                baboon_events[j1].append([event, tissues])
+            except:
+                baboon_events[j1] = [[event, tissues]]
+
+            try:
+                baboon_events[j2].append([event, tissues])
+            except:
+                baboon_events[j2] = [[event, tissues]]
+
+    print len(mouse_events), len(baboon_events)
+    common = 0
+    matched_events = {}
+    matched_mm_events = {}
+    tissue_matrix = {}
+    mm_single_tissue_counts = {}
+    ba_single_tissue_counts = {}
+    for junction in mouse_events:
+        if junction in baboon_events:
+            common += 1
+            mm_events = {}
+            for mm_event, mm_tissue in mouse_events[junction]:
+                try:
+                    mm_events[mm_event].append(mm_tissue)
+                except:
+                    mm_events[mm_event] = [mm_tissue]
+
+            for mm_event in mm_events:
+                mm_tissues = mm_events[mm_event]
+                mm_tissues = unique.unique(mm_tissues)
+                for ba_event, ba_tissues in baboon_events[junction]:
+                    ba_tissues = unique.unique(ba_tissues)
+                    matched_events[(mm_event, ba_event)] = (mm_tissues, ba_tissues)
+                    matched_mm_events[mm_event] = []
+
+    def matchingTissues(mouse, baboon):
+        m_matches = []
+        b_matches = []
+        for m in mouse:
+            for b in baboon:
+                if m in equivalencies:
+                    if b in equivalencies[m]:
+                        m_matches.append(m)
+                        b_matches.append(b)
+
+        if len(m_matches) == 0:
+            return ''
+        m_matches = string.join(unique.unique(m_matches), ', ')
+        b_matches = string.join(unique.unique(b_matches), ', ')
+        return m_matches + ':' + b_matches
+
+    for mm_event, ba_event in matched_events:
+        mm_tissues, ba_tissues = matched_events[(mm_event, ba_event)]
+        matching_tissues = matchingTissues(mm_tissues, ba_tissues)
+        eo.write(string.join([mm_event, ba_event, string.join(mm_tissues, '|'), string.join(ba_tissues, '|'), str(len(mm_tissues)), str(len(ba_tissues)), matching_tissues], '\t') + '\n')
+        for mt in mm_tissues:
+            for bt in ba_tissues:
+                try:
+                    tissue_matrix[(mt, bt)] += 1
+                except:
+                    tissue_matrix[(mt, bt)] = 1
+                else:
+                    try:
+                        mm_single_tissue_counts[mt] += 1
+                    except:
+                        mm_single_tissue_counts[mt] = 1
+
+                    try:
+                        ba_single_tissue_counts[bt] += 1
+                    except:
+                        ba_single_tissue_counts[bt] = 1
+
+    print mm_single_tissue_counts['Heart']
+    print tissue_matrix[('Heart', 'Heart')]
+    tissue_matrix_table = []
+    ba_tissues = ['Tissues']
+    for bt in ba_single_tissue_counts:
+        ba_tissues.append(bt)
+
+    eo2.write(string.join(ba_tissues, '\t') + '\n')
+    for mt in mm_single_tissue_counts:
+        table = []
+        for bt in ba_single_tissue_counts:
+            if bt == 'Thyroid' and mt == 'Heart':
+                print tissue_matrix[(mt, bt)]
+                print tissue_matrix[(mt, bt)] / (1.0 * ba_single_tissue_counts[bt])
+            try:
+                table.append(str(tissue_matrix[(mt, bt)] / (1.0 * ba_single_tissue_counts[bt])))
+            except:
+                table.append('0')
+
+        eo2.write(string.join([mt] + table, '\t') + '\n')
+
+    print common, len(matched_events), len(matched_mm_events)
+    eo.close()
+    eo2.close()
+
+def rankExpressionRescueFromCellHarmony(organized_diff_ref, repair1_folds, repair2_folds, reference_fold_dir, repair_dir1, repair_dir2):
+
+    def importCellHarmonyDEGs(folder, repair=False):
+        print folder
+        files = os.listdir(folder)
+        DEG_db = {}
+        for file in files:
+            filename = folder + '/' + file
+            if '.txt' in file and 'GE.' in file:
+                header = True
+                count = 0
+                header = True
+                file = file[:-4]
+                file = string.split(file[3:], '_')[0]
+                if file[:2] == 'DM':
+                    file = 'global'
+                for line in open(filename, 'rU').xreadlines():
+                    if header:
+                        header = False
+                    else:
+                        data = cleanUpLine(line)
+                        t = string.split(data, '\t')
+                        GeneID, SystemCode, LogFold, rawp, adjp, Symbol, avg_g2, avg_g1 = t
+                        rawp = float(rawp)
+                        adjp = float(adjp)
+                        if float(LogFold) > 0:
+                            direction = 'positive'
+                        else:
+                            direction = 'negative'
+                        if repair:
+                            if float(LogFold) > 0:
+                                fold = math.pow(2, float(LogFold))
+                            else:
+                                fold = -1 / math.pow(2, float(LogFold))
+                            if Symbol == 'BC049762':
+                                print 'BC049762', file, LogFold, fold
+                            if abs(fold) > 1.5 and adjp < 0.05:
+                                try:
+                                    DEG_db[Symbol].append([file, direction])
+                                except:
+                                    DEG_db[Symbol] = [[file, direction]]
+
+                        else:
+                            try:
+                                DEG_db[Symbol].append([file, direction])
+                            except:
+                                DEG_db[Symbol] = [[file, direction]]
+
+        return DEG_db
+
+    ref_DEGs = importCellHarmonyDEGs(reference_fold_dir)
+    repaired_DEGs = importCellHarmonyDEGs(repair_dir1, repair=True)
+    repaired2_DEGs = importCellHarmonyDEGs(repair_dir2, repair=True)
+
+    def importCellHarmonyPseudoBulkFolds(filename):
+        fold_db = {}
+        header = True
+        for line in open(filename, 'rU').xreadlines():
+            data = cleanUpLine(line)
+            t = string.split(data, '\t')
+            if header:
+                fold_db['header'] = t[1:]
+                header = False
+            else:
+                uid = t[0]
+                folds = t[1:]
+                fold_db[uid] = folds
+
+        return fold_db
+
+    repaired_fold_db = importCellHarmonyPseudoBulkFolds(repair1_folds)
+    repaired2_fold_db = importCellHarmonyPseudoBulkFolds(repair2_folds)
+    import collections
+    ordered_ref_degs = collections.OrderedDict()
+    ordered_cluster_genes = collections.OrderedDict()
+    repair_verified = collections.OrderedDict()
+    repair2_verified = collections.OrderedDict()
+    cluster_ordered_ref_db = collections.OrderedDict()
+    header = True
+    for line in open(organized_diff_ref, 'rU').xreadlines():
+        data = cleanUpLine(line)
+        t = string.split(data, '\t')
+        if header:
+            ref_header = t
+            header = False
+        else:
+            cluster, geneID = string.split(t[0], ':')
+            cluster = string.split(cluster, '_')[0]
+            if cluster[:2] == 'DM':
+                cluster = 'global'
+            ordered_ref_degs[(geneID, cluster)] = t
+            try:
+                cluster_ordered_ref_db[cluster].append(geneID)
+            except:
+                cluster_ordered_ref_db[cluster] = [geneID]
+
+    repaired_verified = {}
+    verified = {}
+    for geneID, ref_cluster in ordered_ref_degs:
+        for cluster, ref_direction in ref_DEGs[geneID]:
+            if geneID in repaired_DEGs:
+                for repair_cluster, repair_direction in repaired_DEGs[geneID]:
+                    if repair_cluster == cluster and ref_direction != repair_direction and ('Neu' in repair_cluster or 'global' in repair_cluster):
+                        try:
+                            repair_verified[repair_cluster].append(geneID)
+                        except:
+                            repair_verified[repair_cluster] = [geneID]
+                        else:
+                            print geneID + '\t' + repair_direction + '\t' + repair_cluster + '\tR412X-HMZ'
+                            try:
+                                verified[geneID].append('R412X-HMZ')
+                            except:
+                                verified[geneID] = ['R412X-HMZ']
+
+            if geneID in repaired2_DEGs:
+                for repair_cluster, repair_direction in repaired2_DEGs[geneID]:
+                    if repair_cluster == cluster and ref_direction != repair_direction and ('Neu' in cluster or 'global' in cluster):
+                        try:
+                            repair2_verified[repair_cluster].append(geneID)
+                        except:
+                            repair2_verified[repair_cluster] = [geneID]
+                        else:
+                            print geneID + '\t' + repair_direction + '\t' + repair_cluster + '\t' + 'R412X-Irf8'
+                            try:
+                                verified[geneID].append('R412X-Irf8')
+                            except:
+                                verified[geneID] = ['R412X-Irf8']
+
+    for gene in verified:
+        verified[gene] = unique.unique(verified[gene])
+
+    eo1 = export.ExportFile(organized_diff_ref[:-4] + '-Repair-Sorted.txt')
+    eo2 = export.ExportFile(organized_diff_ref[:-4] + '-Repaired-Only.txt')
+    header = ref_header + repaired_fold_db['header'] + repaired2_fold_db['header']
+    eo1.write(string.join(header, '\t') + '\n')
+    eo2.write(string.join(header, '\t') + '\n')
+    print len(ordered_ref_degs)
+    print len(repaired_fold_db)
+    print len(repaired2_fold_db)
+    print len(repair_verified)
+    print len(repair2_verified)
+    print len(verified)
+    print len(ordered_ref_degs)
+    prior_cluster = None
+    added_genes = []
+    for geneID, cluster in ordered_ref_degs:
+        try:
+            folds = ordered_ref_degs[(geneID, cluster)] + repaired_fold_db[geneID] + repaired2_fold_db[geneID]
+        except:
+            print '...Error in identifying match UID for:', geneID
+            added_genes.append(geneID)
+            continue
+        else:
+            if geneID not in verified:
+                eo1.write(string.join(folds, '\t') + '\n')
+            elif len(verified[geneID]) > 1:
+                added_genes.append(geneID)
+            elif 'R412X-HMZ' in verified[geneID]:
+                added_genes.append(geneID)
+            else:
+                eo2.write(string.join(folds, '\t') + '\n')
+                added_genes.append(geneID)
+
+    eo1.close()
+    eo2.close()
+    
+def exportSeuratMarkersToClusters(filename):
+    prior_cluster = None
+    for line in open(filename, 'rU').xreadlines():
+        data = cleanUpLine(line)
+        cluster,gene = string.split(data, '\t')
+        if cluster!= prior_cluster:
+            try: eo.close()
+            except: pass
+            path = filename[:-4]+'_'+cluster+'.txt'
+            eo = export.ExportFile(path)
+            eo.write('UID\tSy\n')
+        eo.write(gene+'\tSy\n')
+        prior_cluster = cluster
+    eo.close()
+            
+def reorganizeMetaData(filename):
+    path = filename[:-4]+'_reorganized'+'.txt'
+    eo = export.ExportFile(path)
+    firstRow=True
+    for line in open(filename, 'rU').xreadlines():
+        if firstRow:
+            firstRow=False
+        else:
+            data = cleanUpLine(line)
+            t = string.split(data, '\t')
+            uid = t[0]
+            for val in t[1:]:
+                if len(val)>1:
+                    eo.write(uid+'\t'+val+'\n')
+    eo.close()
+
+def formatMetaData(filename):
+    """ Export metadata annotations from a matrix that consist of mutations, numerical values
+    categorical values and true/false values to a simple two column format for OncoSplice"""
+    
+    export_path = filename[:-4]+'_reorganized'+'.txt'
+    eo = export.ExportFile(export_path)
+    metadata=[]
+    quantitative_values={}
+    quantitative_sample_values={}
+    row_count=1
+    for line in open(filename, 'rU').xreadlines():
+        data = cleanUpLine(line)
+        t = string.split(data, '\t')
+        if row_count==1:
+            headers = t[1:]
+        elif row_count==2:
+            if t[0] == 'FORMAT':
+                dataFormat = t[1:]
+        else:
+            sampleID = t[0]
+            index=0
+            for value in t[1:]:
+                if dataFormat[index] == 'TRUE-FALSE':
+                    if value == 'TRUE' or value == 'y' or value == 'yes' or value == 'true' or value == 'YES' or value == 'True':
+                        ### The sample is labeled as the column header (e.g., Alive)
+                        metadata.append([sampleID,headers[index]])
+                if dataFormat[index] == 'QUANTITATIVE':
+                    if len(headers[index])>0 and value != '':
+                        ### Prior to export, define low, median and high clusters
+                        try:
+                            value = float(value)
+                            try:
+                                quantitative_values[headers[index]].append(value)
+                            except:
+                                quantitative_values[headers[index]] = [value]
+                            try:
+                                quantitative_sample_values[headers[index]].append([sampleID,value])
+                            except:
+                                quantitative_sample_values[headers[index]] = [[sampleID,value]]
+                        except:
+                            pass ### Invalid non-numeric
+                if dataFormat[index] == 'VERBOSE':
+                    if len(headers[index])>0 and value != '':
+                        metadata.append([sampleID,headers[index]+'('+value+')'])
+                if dataFormat[index] == 'MUTATION':
+                    if len(headers[index])>0 and value != '':
+                        metadata.append([sampleID,headers[index]])
+                        if 'p.' in value:
+                            value = string.replace(value,'p.','')
+                        if '; ' in value:
+                            value = string.split(value,';')[0]
+                        if len(value)>1:
+                            metadata.append([sampleID,headers[index]+'-'+value[:-1]])
+                index+=1
+        row_count+=1
+    
+    for annotation in quantitative_values:
+        values = quantitative_values[annotation]
+        one_third = len(values)/3
+        bottom = values[:one_third]
+        middle = values[one_third:-1*one_third]
+        top = values[-1*one_third:]
+        for (sampleID, value) in quantitative_sample_values[annotation]:
+            if value in bottom:
+                metadata.append([sampleID,annotation+'-low'])
+            elif value in middle:
+                metadata.append([sampleID,annotation+'-mid'])
+            elif value in top:
+                metadata.append([sampleID,annotation+'-high'])
+            else:
+                print value,'value is out-of-range!!!'; sys.exit()
+                
+    ### Write these metadata annotations out to a two column file
+    for (sampleID,annotation) in metadata:
+        if len(sampleID)>1:
+            eo.write(sampleID+'\t'+annotation+'\n') 
+    eo.close()
+            
 if __name__ == '__main__':
-    a = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/CellHarmonyReference/groups.all-wt-R412X.txt'
-    b = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/exp.Guide3-cellHarmony-reference__R412X-GMP-ReOrdered-order.txt'
-    #convertGroupsToBinaryMatrix(a,b);sys.exit()
-    a = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/tests/events.txt'
+    formatMetaData('/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/BEAT-AML/metadata/BEAT-AML_MetaData-STRUCTURED.txt');sys.exit()
+    reorganizeMetaData('/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/BEAT-AML/metadata/metadata_same-format.txt');sys.exit()
+    folder = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/RBM20/eCLIP/ENCODE/annotations'
+    #simpleCombineBedFiles(folder);sys.exit()
+    
+    PSI_dir = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/PSI/SpliceICGS.R1.Depleted.12.27.17/all-depleted-and-KD/temp/'
+    ##summarizePSIresults(PSI_dir,PSI_dir);sys.exit()
+    #tempFunction('/Users/saljh8/Downloads/LungCarcinoma/HCC.S5063.TPM.txt');sys.exit()
+    a = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/PSI/SpliceICGS.R1.Depleted.12.27.17/all-depleted-and-KD/temp/'
+    compareEventLists(a);sys.exit()
+    filename = '/Users/saljh8/Downloads/Kerscher_lists_mouse_versus_mouse_and_human_gene_lists/Top50MouseandHuman1-clusters.txt'
+    #exportSeuratMarkersToClusters(filename); sys.exit()
+    organized_diff_ref = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/WuXi-David-Nature-Revision/PROJ-00584/fastqs/DM-4-Gfi1-R412X-ModGMP-1694-ADT/outs/filtered_gene_bc_matrices/Merged-Cells/centroid-revised/custom/cellHarmony/OrganizedDifferentials.txt'
+    repair1_folds = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/WuXi-David-Nature-Revision/PROJ-00584/fastqs/DM-5-Gfi1-R412X-R412X-ModGMP-1362-ADT/outs/filtered_gene_bc_matrices/Merged-Cells/hybrid/cellHarmony-vs-DM2-1.2-fold-adjp/OtherFiles/exp.ICGS-cellHarmony-reference__DM-5-Gfi1-R412X-R412X-ModGMP-1362-D7Cells-ADT-Merged_matrix_CPTT-AllCells-folds.txt'
+    repair2_folds = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/WuXi-David-Nature-Revision/PROJ-00584/fastqs/DM-6-Gfi1-R412X-Irf8-ModGMP-1499-ADT/outs/filtered_gene_bc_matrices/Merged-Cells-iseq/cellHarmony-centroid-revsied/hybrid/cellHarmony/OtherFiles/exp.ICGS-cellHarmony-reference__DM-6-Gfi1-R412X-Irf8-ModGMP-1499-ADT_matrix-3_matrix_CPTT-hybrid-AllCells-folds.txt'
+    reference_fold_dir = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/WuXi-David-Nature-Revision/PROJ-00584/fastqs/DM-4-Gfi1-R412X-ModGMP-1694-ADT/outs/filtered_gene_bc_matrices/Merged-Cells/centroid-revised/custom/cellHarmony/DifferentialExpression_Fold_1.2_adjp_0.05'
+    repair_dir1 = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/WuXi-David-Nature-Revision/PROJ-00584/fastqs/DM-5-Gfi1-R412X-R412X-ModGMP-1362-ADT/outs/filtered_gene_bc_matrices/Merged-Cells/hybrid/vs-R412X-het/cellHarmony/DifferentialExpression_Fold_1.2_adjp_0.05'
+    repair_dir1 = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/WuXi-David-Nature-Revision/PROJ-00584/fastqs/DM-5-Gfi1-R412X-R412X-ModGMP-1362-ADT/outs/filtered_gene_bc_matrices/Merged-Cells/hybrid/vs-R412X-het/cellHarmony/OtherFiles/DEGs-LogFold_0.0_rawp'
+    repair_dir2 = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/WuXi-David-Nature-Revision/PROJ-00584/fastqs/DM-6-Gfi1-R412X-Irf8-ModGMP-1499-ADT/outs/filtered_gene_bc_matrices/Merged-Cells-iseq/cellHarmony-centroid-revsied/hybrid/vs-R412X-Het/cellHarmony/DifferentialExpression_Fold_1.2_adjp_0.05'
+    repair_dir2 = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/WuXi-David-Nature-Revision/PROJ-00584/fastqs/DM-6-Gfi1-R412X-Irf8-ModGMP-1499-ADT/outs/filtered_gene_bc_matrices/Merged-Cells-iseq/cellHarmony-centroid-revsied/hybrid/vs-R412X-Het/cellHarmony/OtherFiles/DEGs-LogFold_0.0_rawp'
+    TF_file = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/NCI-R01/CCSB_TFIso_Clones.txt'
+    PSI_dir = '/Volumes/salomonis2/NCI-R01/TCGA-BREAST-CANCER/TCGA-files-Ens91/bams/AltResults/AlternativeOutput/OncoSPlice-All-Samples-filtered-names/SubtypeAnalyses-Results/round1/Events-dPSI_0.1_adjp/'
+    simpleCombineFiles('/Volumes/salomonis2/NCI-R01/Harvard/BRC_PacBio_Seq/metadataanalysis/PSICluster/TCGA/FilteredTF')
+    sys.exit()
+    filename = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Anukana/Breast-Cancer/TF-isoform/TF_ratio_correlation-analysis/tcga_rsem_isopct_filtered-filtered.2-filtered.txt'
+    TF_file = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Anukana/Breast-Cancer/TF-isoform/Ensembl-isoform-key-CCSB.txt'
+    input_file = '/Volumes/salomonis2/NCI-R01/TCGA-BREAST-CANCER/Anukana/UO1analysis/xenabrowserFiles/tcga_rsem_isoform_tpm_filtered.txt'
+    Mm_Ba_coordinates = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Krithika/Baboon-Mouse/mm10-circadian_liftOverTo_baboon.txt'
+    Ba_events = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Krithika/Baboon-Mouse/Baboon_metacycle-significant-AS-coordinates.txt'
+    Mm_Ba_coordinates = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Krithika/Human-Mouse/hg19-mm10-12-tissue-circadian.txt'
+    Ba_events = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Krithika/Human-Mouse/Human_CYCLOPS-significant-AS-coordinates.txt'
+    filename = '/Users/saljh8/Desktop/DemoData/Venetoclax/D4/cellHarmony-rawp-stringent/gene_summary.txt'
+    filename = '/Volumes/salomonis2/LabFiles/Nathan/10x-PBMC-CD34+/AML-p27-pre-post/pre/cellHarmony-latest/gene_summary-p27.txt'
+    filename = '/Volumes/salomonis2/LabFiles/Dan-Schnell/To_cellHarmony/MIToSham/Input/cellHarmony/cell-frequency-stats.txt'
+    
+    TF_file = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/NCI-R01/CCSB_TFIso_Clones.txt'
+    PSI_dir = '/Volumes/salomonis2/NCI-R01/TCGA-BREAST-CANCER/TCGA-files-Ens91/bams/AltResults/AlternativeOutput/OncoSPlice-All-Samples-filtered-names/SubtypeAnalyses-Results/round1/Events-dPSI_0.1_adjp/'
+    #convertPSICoordinatesToBED(PSI_dir);sys.exit()
+
+    
+    filename = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Anukana/Breast-Cancer/TF-isoform/TF_ratio_correlation-analysis/tcga_rsem_isopct_filtered-filtered.2-filtered.txt'
+    TF_file = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Anukana/Breast-Cancer/TF-isoform/Ensembl-isoform-key-CCSB.txt'
+    #exportIntraTFIsoformCorrelations(filename,TF_file,0.3,anticorrelation=True);sys.exit()
+    input_file= '/Volumes/salomonis2/NCI-R01/TCGA-BREAST-CANCER/Anukana/UO1analysis/xenabrowserFiles/tcga_rsem_isoform_tpm_filtered.txt'
+    #convertXenaBrowserIsoformDataToStandardRatios(input_file);sys.exit()
+    Mm_Ba_coordinates = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Krithika/Baboon-Mouse/mm10-circadian_liftOverTo_baboon.txt'
+    Ba_events = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Krithika/Baboon-Mouse/Baboon_metacycle-significant-AS-coordinates.txt'
+    #convertPSICoordinatesToBED(Mm_Ba_coordinates,Ba_events);sys.exit()
+
+    #PSIfilterAndImpute('/Volumes/salomonis2/LabFiles/krithika_circadian/GSE98965-Papio_Anubis/files/grp-files/Filtered-Psi-groups-files'); sys.exit()
+    filename='/Users/saljh8/Desktop/DemoData/Venetoclax/D4/cellHarmony-rawp-stringent/gene_summary.txt'
+    filename = '/Volumes/salomonis2/LabFiles/Nathan/10x-PBMC-CD34+/AML-p27-pre-post/pre/cellHarmony-latest/gene_summary-p27.txt'
+    filename = '/Volumes/salomonis2/LabFiles/Dan-Schnell/To_cellHarmony/MIToSham/Input/cellHarmony/cell-frequency-stats.txt'
+    index1=2;index2=3; x_axis='Number of Differentially Expressed Genes'; y_axis = 'Comparisons'; title='Hippocampus - Number of Differentially Expressed Genes'
+    #OutputFile = export.findParentDir(filename)
+    #OutputFile = export.findParentDir(OutputFile[:-1])+'/test.pdf'
+    #exportTFcorrelations('/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/SuperPan/ExpressionInput/exp.Cdt1-2139-genes.txt','/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/Marie.Dominique/TF-to-gene/228-tfs.txt',0.1);sys.exit()
+    #stackedbarchart(filename,display=True,output=OutputFile);sys.exit()
+    index1=2;index2=3; x_axis='Number of DEGs'; y_axis = 'Reference clusters'; title='cellHarmony Differentially Expressed Genes'
+    index1=-2;index2=-1; x_axis='Cell-State Percentage'; y_axis = 'Reference clusters'; title='Assigned Cell Frequencies'
+    #barchart(filename,index1,index2,x_axis,y_axis,title,display=True)
+    #barchart(filename,index1,index2,x_axis,y_axis,title,display=True,color1='IndianRed',color2='SkyBlue');sys.exit()
+    diff=0.7
+    print 'diff:',diff
+    #latteralMerge(file1, file2);sys.exit()
+    #removeMarkerFinderDoublets('/Volumes/salomonis2/Nancy_ratner/2mo-NF/exp.Figure_SX-ICGS-MarkerFinder.filt.txt',diff=diff);sys.exit()
+    #outputForGOElite('/Users/saljh8/Desktop/R412X/completed/centroids.WT.R412X.median.txt');sys.exit()
+    #simpleStatsSummary('/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/HCA/Mean-Comparisons/ExpressionInput/MergedFiles.Counts.UMI.txt');sys.exit()
+    a = '/Users/saljh8/Downloads/groups.CellTypes-Predicted-Label-Transfer-For-Nuclei-matrix.txt'
+    b = '/Volumes/salomonis2/Immune-10x-data-Human-Atlas/Bone-Marrow/Stuart/Browser/ExpressionInput/HS-compatible_symbols.txt'
+    #b = '/data/salomonis2/GSE107727_RAW-10X-Mm/filtered-counts/ExpressionInput/Mm_compatible_symbols.txt'
+    #a = '/Volumes/salomonis2/Immune-10x-data-Human-Atlas/Bone-Marrow/Stuart/Browser/head.txt'
+    ##transposeMatrix(a);sys.exit()
+    #convertSymbolLog(a,b);sys.exit()
+    #returnIntronJunctionRatio('/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Fluidigm_scRNA-Seq/12.09.2107/counts.WT-R412X.txt');sys.exit()
+    #geneExpressionSummary('/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/Ly6g/combined-ICGS-Final/ExpressionInput/DEGs-LogFold_1.0_rawp');sys.exit()
+    b = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/C202SC19040013/raw_data/ModGMP_PMLRARTG/ModGMP_PMLRARTG/outs/filtered_feature_bc_matrix/AltAnalyze-Outliers-removed/ICGS-NMF-euclidean-ref/groups.ICGS.txt'
+    a = '/Volumes/salomonis2/Grimes/RNA/scRNA-Seq/10x-Genomics/C202SC19040013/raw_data/ModGMP_PMLRARTG/ModGMP_PMLRARTG/outs/filtered_feature_bc_matrix/AltAnalyze-Outliers-removed/ICGS-NMF-euclidean-ref/exp.ICGS.txt'
+    #convertGroupsToBinaryMatrix(b,a,cellHarmony=False);sys.exit()
+    a = '/Users/saljh8/Desktop/temp/groups.TNBC.txt'
     b = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/tests/clusters.txt'
     #simpleCombineFiles('/Users/saljh8/Desktop/dataAnalysis/Collaborative/Jose/NewTranscriptome/CombinedDataset/ExpressionInput/Events-LogFold_0.58_rawp')
     #removeRedundantCluster(a,b);sys.exit()
-    #compareEventLists('/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/PSI/Knockdowns/Events-dPSI_0.1_rawp');sys.exit()
-    #filterPSIValues('/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/PSI/Hs_RNASeq_top_alt_junctions-PSI_EventAnnotation-367-Leucegene.txt');sys.exit()
+    a = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/PSI/SpliceICGS.R1.Depleted.12.27.17/all-depleted-and-KD'
+    #a = '/Users/saljh8/Desktop/Ashish/all/Events-dPSI_0.1_rawp-0.01/'
+
+    #filterPSIValues('/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/PSI/CORNEL-AML/PSI/exp.Cornell-Bulk.txt');sys.exit()
     #compareGenomicLocationAndICGSClusters();sys.exit()
     #ViolinPlot();sys.exit()
     #simpleScatter('/Users/saljh8/Downloads/CMdiff_paper/calcium_data-KO4.txt');sys.exit()
@@ -6282,8 +8128,14 @@ if __name__ == '__main__':
     gene_list_file = '/Users/saljh8/Desktop/dataAnalysis/Grimes/All-Fluidigm/ExpressionInput/comb_plot3.txt'
     gene_list_file = '/Users/saljh8/Desktop/Grimes/MultiLin-Code/MultiLin-TFs.txt'
     gene_list_file = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/ExpressionInput/genes.txt'
-    gene_list_file = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/ExpressionInput/cell_cycle.txt'
-    genesets = importGeneList(gene_list_file)
+    gene_list_file = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/10X-DropSeq-comparison/Final-Classifications/genes.txt'
+    gene_list_file = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/Ly6g/combined-ICGS-Final/TFs/Myelo_TFs2.txt'
+    gene_list_file = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/Ly6g/combined-ICGS-Final/R412X/customGenes.txt'
+    gene_list_file = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/Ly6g/combined-ICGS-Final/ExpressionInput/genes.txt'
+    gene_list_file = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/Ly6g/combined-ICGS-Final/R412X/genes.txt'
+    gene_list_file = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/HCA/BM1-8_CD34+/ExpressionInput/MixedLinPrimingGenes.txt'
+    gene_list_file = '/Users/saljh8/Dropbox/Manuscripts/MBNL1/genes.txt'
+    genesets = importGeneList(gene_list_file,n=1)
     filename = '/Users/saljh8/Desktop/Grimes/KashishNormalization/3-25-2015/comb-plots/exp.IG2_GG1-extended-output.txt'
     filename = '/Users/saljh8/Desktop/Grimes/KashishNormalization/3-25-2015/comb-plots/genes.tpm_tracking-ordered.txt'
     filename = '/Users/saljh8/Desktop/demo/Amit/ExpressedCells/GO-Elite_results/3k_selected_LineageGenes-CombPlotInput2.txt'
@@ -6293,12 +8145,23 @@ if __name__ == '__main__':
     filename = '/Users/saljh8/Desktop/dataAnalysis/Grimes/All-Fluidigm/ExpressionInput/exp.Lsk_panorama.txt'
     filename = '/Users/saljh8/Desktop/demo/BoneMarrow/ExpressionInput/exp.BoneMarrow-scRNASeq.txt'
     filename = '/Users/saljh8/Desktop/demo/Mm_Gottgens_3k-scRNASeq/ExpressionInput/exp.GSE81682_HTSeq-cellHarmony-filtered.txt'
-    filename = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/ExpressionInput/exp.Guide3_NatureDefaults.txt'
-    filename = '/Users/saljh8/Desktop/Old Mac/Desktop/Grimes/Kallisto/ExpressionInput/exp.Guide3-cellHarmony-revised-missing-LSK-Symbol.txt'
-    
+    filename = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Harinder/scRNASeq_Mm-Plasma/PCA-loading/ExpressionInput/exp.PCA-Symbol.txt'
+    filename = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/10X-DropSeq-comparison/Final-Classifications/cellHarmony/MF-analysis/ExpressionInput/exp.Fluidigm-log2-NearestNeighbor-800.txt'
+    filename = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/10X-DropSeq-comparison/Final-Classifications/cellHarmony/MF-analysis/ExpressionInput/exp.10X-log2-NearestNeighbor.txt'
+    filename = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/10X-DropSeq-comparison/DropSeq/MultiLinDetect/ExpressionInput/DataPlots/exp.DropSeq-2k-log2.txt'
+    filename = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/Ly6g/combined-ICGS-Final/R412X/exp.allcells-v2.txt'
+    filename = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/HCA/BM1-8_CD34+/ExpressionInput/exp.CD34+.v5-log2.txt'
+    filename = '/Users/saljh8/Dropbox/Manuscripts/MBNL1/exp.MBNL1-all.txt'
+    #filename = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-10x/CITE-Seq-MF-indexed/ExpressionInput/exp.cellHarmony.v3.txt'
+    #filename = '/Volumes/salomonis2/Theodosia-Kalfa/Combined-10X-CPTT/ExpressionInput/exp.MergedFiles-ICGS.txt'
+    #filename = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Grimes/All-Fluidigm/updated.8.29.17/Ly6g/combined-ICGS-Final/R412X/exp.cellHarmony-WT-R412X-relative.txt'
+    #filename = '/Users/saljh8/Desktop/Old Mac/Desktop/Grimes/Kallisto/Ly6g/CodingOnly/Guide3-Kallisto-Coding-NatureAugmented/SubClustering/Nov-27-Final-version/ExpressionInput/exp.wt-panorama.txt'
+    #filename = '/Volumes/salomonis2/Harinder-singh/Run2421-10X/10X_IRF4_Lo/outs/filtered_gene_bc_matrices/ExpressionInput/exp.10X_IRF4_Lo_matrix_CPTT-ICGS.txt'
+    #filename = '/Users/saljh8/Desktop/Old Mac/Desktop/Grimes/Kallisto/Ly6g/CodingOnly/Guide3-Kallisto-Coding-NatureAugmented/SubClustering/Nov-27-Final-version/R412X/exp.R412X-RSEM-order.txt'
+
     print genesets
     for gene_list in genesets:
-        multipleSubPlots(filename,gene_list,SubPlotType='column')
+        multipleSubPlots(filename,gene_list,SubPlotType='column',n=1)
     sys.exit()
 
     plotHistogram(filename);sys.exit()

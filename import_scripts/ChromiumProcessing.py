@@ -2,19 +2,59 @@ import sys,string,os
 sys.path.insert(1, os.path.join(sys.path[0], '..')) ### import parent dir dependencies
 import csv
 import scipy.io
+from scipy import sparse, stats, io
 import numpy
 import time
+import math
+from scipy import sparse, stats
+import gzip
+try:
+    import h5py
+except:
+    print ('Missing the h5py library (hdf5 support)...')
 
-def import10XSparseMatrix(matrices_dir,genome,dataset_name, expFile=None):
+def import10XSparseMatrix(matrices_dir,genome,dataset_name, expFile=None, log=True):
     start_time = time.time()
-    human_matrix_dir = os.path.join(matrices_dir, genome)
-    mat = scipy.io.mmread(os.path.join(human_matrix_dir, "matrix.mtx"))
-    genes_path = os.path.join(human_matrix_dir, "genes.tsv")
-    gene_ids = [row[0] for row in csv.reader(open(genes_path), delimiter="\t")]
-    gene_names = [row[1] for row in csv.reader(open(genes_path), delimiter="\t")]
-    barcodes_path = os.path.join(human_matrix_dir, "barcodes.tsv")
-    barcodes = [row[0] for row in csv.reader(open(barcodes_path), delimiter="\t")]
-    barcodes = map(lambda x: string.replace(x,'-1',''), barcodes)
+    
+    if '.h5' in matrices_dir:
+        h5_filename = matrices_dir
+        f = h5py.File(h5_filename, 'r')
+        genome = None
+        if 'matrix' in f:
+            # CellRanger v3
+            barcodes = list(f['matrix']['barcodes'])
+            print barcodes;sys.exit()
+            gene_ids = f['matrix']['features']['id']
+            gene_names = f['matrix']['features']['name']
+            mat = sparse.csc_matrix((f['matrix']['data'], f['matrix']['indices'], f['matrix']['indptr']), shape=f['matrix']['shape'])
+        else:
+            # CellRanger v2
+            possible_genomes = f.keys()
+            if len(possible_genomes) != 1:
+                raise Exception("{} contains multiple genomes ({}).  Explicitly select one".format(h5_filename, ", ".join(possible_genomes)))
+            genome = possible_genomes[0]
+            mat = sparse.csc_matrix((f[genome]['data'], f[genome]['indices'], f[genome]['indptr']))
+            gene_names = f[genome]['gene_names']
+            barcodes = list(f[genome]['barcodes'])
+            gene_ids = f[genome]['genes']
+    else:
+        #matrix_dir = os.path.join(matrices_dir, genome)
+        matrix_dir = matrices_dir
+        mat = scipy.io.mmread(matrix_dir)
+        genes_path = string.replace(matrix_dir,'matrix.mtx','genes.tsv')
+        barcodes_path = string.replace(matrix_dir,'matrix.mtx','barcodes.tsv')
+        if os.path.isfile(genes_path)==False:
+            genes_path = string.replace(matrix_dir,'matrix.mtx','features.tsv')
+        if '.gz' in genes_path:
+            gene_ids = [row[0] for row in csv.reader(gzip.open(genes_path), delimiter="\t")]
+            gene_names = [row[1] for row in csv.reader(gzip.open(genes_path), delimiter="\t")]
+            barcodes = [row[0] for row in csv.reader(gzip.open(barcodes_path), delimiter="\t")]
+        else:
+            gene_ids = [row[0] for row in csv.reader(open(genes_path), delimiter="\t")]
+            gene_names = [row[1] for row in csv.reader(open(genes_path), delimiter="\t")]
+            barcodes = [row[0] for row in csv.reader(open(barcodes_path), delimiter="\t")]
+    #barcodes = map(lambda x: string.replace(x,'-1',''), barcodes) ### could possibly cause issues with comparative analyses
+    matrices_dir = os.path.abspath(os.path.join(matrices_dir, os.pardir))
 
     ### Write out raw data matrix
     counts_path = matrices_dir+'/'+dataset_name+'_matrix.txt'
@@ -54,7 +94,10 @@ def import10XSparseMatrix(matrices_dir,genome,dataset_name, expFile=None):
         if val==0:
             return '0'
         else:
-            return (10000.0*val)/barcode_sum
+            if log:
+                return math.log((10000.00*val/barcode_sum)+1.0,2) ### convert to log2 expression
+            else:
+                return 10000.00*val/barcode_sum
 
     vfunc = numpy.vectorize(calculateCPTT)
     norm_mat_array=[]
@@ -77,6 +120,7 @@ def import10XSparseMatrix(matrices_dir,genome,dataset_name, expFile=None):
     #print time.time()-start_time
     print 'CPTT written to file:',
     print norm_path
+    return norm_path
 
 if __name__ == '__main__':
     import getopt

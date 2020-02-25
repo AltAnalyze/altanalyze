@@ -1,17 +1,20 @@
 species_code	species_name	compatible_algorithms
 Hs	Homo sapiens	
+At	Arabidopsis thaliana	
 Ma	Macaca mulatta	
 Ce	Caenorhabditis elegans	
+Cf	Canis familiaris	
 Bt	Bos taurus	
 Mm	Mus musculus	
 Rn	Rattus norvegicus	
 Xl	Xenopus laevis	
 Gg	Gallus gallus	
 Nc	Neurospora crassa	
-Dr	Danio rerio	
 Ac	Anolis carolinensis	
 Dm	Drosophila melanogaster	
 Xl	Test	
 Zm	Zea mays	
 Sc	Saccharomyces cerevisiae	
-At	Arabidopsis thaliana	
+Pn	Papio anubis
+Ma	Macaca mulatta
+	

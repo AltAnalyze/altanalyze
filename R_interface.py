@@ -6,6 +6,7 @@ import copy
 import os
 import os.path
 import unique
+import traceback
 R_present=True
 
 try:
@@ -594,6 +595,7 @@ class RScripts:
         checklinelengths(self._file)
         print_out = r(parse_line)
         dat = r['data']
+        print_out = r(parse_line)
         #print "Number of columns in input file:",len(dat)
         print_out = r('data<-as.matrix(data)')
         dat = r['data']
@@ -638,7 +640,7 @@ class RScripts:
             if len(dat) > 1:
                 dist = r(distance_matrix_line)
                 #print distance_matrix_line
-                print_out = r('hopa<-hopach(t(data),dmat=distmata,ord="own"'+force2+')') #,coll="all"
+                print_out = r('hopa<-hopach(t(data),dmat=distmata,ord="own"'+force1+')') #,coll="all"
                 #print ['hopa<-hopach(t(data),dmat=distmata,ord="own",'+force2+')']
                 #print 'hopa<-hopach(t(data),dmat=distmata,ord="own"'+force2+')'
                 hopach_run = r['hopa']

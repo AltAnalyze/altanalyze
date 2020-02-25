@@ -1,0 +1,7 @@
+ComparisonName	RegulatedGenes	Upregulated	Downregulated
+HSCP-1_AML_vs_HSCP-1_cellHarmony-Reference	146	119	27
+DC_AML_vs_DC_cellHarmony-Reference	365	34	331
+Mono_AML_vs_Mono_cellHarmony-Reference	385	229	156
+HSCP-2_AML_vs_HSCP-2_cellHarmony-Reference	153	133	20
+IG2_AML_vs_IG2_cellHarmony-Reference	148	109	39
+Myelocyte_AML_vs_Myelocyte_cellHarmony-Reference	4	2	2

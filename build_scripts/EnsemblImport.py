@@ -2145,6 +2145,7 @@ def importExonRegionCoordinates(species):
     filename = 'AltDatabase/ensembl/'+species+'/'+species+'_Ensembl_exon.txt'
     fn=filepath(filename); x=0
     exon_region_coord_db={}
+    all_coord_db={}
     exon_region_db={}
     strand_db={}
     for line in open(fn,'rU').xreadlines():
@@ -2153,6 +2154,8 @@ def importExonRegionCoordinates(species):
         if x==0: x+=1
         else:
             gene, exonid, chr, strand, start, stop, constitutive_call, ens_exon_ids, splice_events, splice_junctions = t
+            start_end = [start, stop]; start_end.sort()
+            all_coord_db[gene,exonid] = start_end
             try:
                 ### start and stop should be unique
                 db = exon_region_coord_db[gene]
@@ -2167,8 +2170,7 @@ def importExonRegionCoordinates(species):
             try: exon_region_db[gene].append((exonid,start))
             except Exception: exon_region_db[gene] = [(exonid,start)]
             strand_db[gene] = strand
-    return exon_region_coord_db, exon_region_db, strand_db
-
+    return exon_region_coord_db, all_coord_db, exon_region_db, strand_db
 
 def exportTranscriptExonIDAssociations(species):
     """ Determine the exon region ID composition of all analyzed mRNAs """
@@ -2178,51 +2180,60 @@ def exportTranscriptExonIDAssociations(species):
     from build_scripts import IdentifyAltIsoforms
     seq_files, transcript_protein_db = IdentifyAltIsoforms.importProteinSequences(species,just_get_ids=True) ### get mRNA-protein IDs
     
-    exon_region_coord_db, exon_region_db, strand_db = importExonRegionCoordinates(species)
+    exon_region_coord_db, all_coord_db, exon_region_db, strand_db = importExonRegionCoordinates(species)
     export_file = 'AltDatabase/ensembl/'+species+'/mRNA-ExonIDs.txt'
     export_data = export.ExportFile(export_file)
     transcript_region_db={}
     transcripts_with_missing_regions={}
-    for key in relative_exon_locations:
+    errorCount=0
+    retainedIntrons=0
+    for key in relative_exon_locations:  ### From UCSC or Ensembl transcript coordinates only
+        all_exon_intron_regions = {}
         ens_transcriptid,gene,strand = key
+        #if ens_transcriptid != 'AK185721': continue
         region_db={} ### track the coordinates for cleaning up the order
         coord_db = exon_region_coord_db[gene]
         for (region,start) in exon_region_db[gene]:
+            all_exon_intron_regions[region] = all_coord_db[gene,region]
             region_db[region] = start
-        for exon_data in relative_exon_locations[key]:
+        for exon_data in relative_exon_locations[key]: ### each transcript exon
             regions=[]
             exon_start,exon_end,ens_exonid = exon_data
-            try: r1 = coord_db['s',exon_start]
-            except Exception: r1 = None
-            try: r2 = coord_db['e',exon_end]
-            except Exception: r2 = None ### Occurs with UCSC for Ensembl exons with longer or shorter 5' mRNA and 3' mRNA boundaries
-            if r2 == None and r1 == None:
-                transcripts_with_missing_regions[ens_transcriptid]=None
-                #print 'Error:',key, exon_start,exon_end,ens_exonid; sys.exit() ### Occurs due to a minor bug in EnsemblImport where certain exons are excluded due to length but eliminated longer exons sharing the same start position
-            else:
-                if r1 == None: r1 = str(r2)
-                if r2 == None: r2 = str(r1) ### don't replace the original values
-                regions.append(r1) ### starting exon-region for this Ensembl/UCSC exon
-                all_regions_coord = exon_region_db[gene] ### get all intermediate exon regions
-                all_regions = map(lambda (r,s): r, all_regions_coord)
-                if r1!=r2:
-                    #print gene,exon_start,exon_end
-                    #print r1, r2
-                    ri1 = all_regions.index(r1)
-                    ri2 = all_regions.index(r2)
-                    #print ri1, ri2, all_regions
-                    #print 'alpha',all_regions[ri1+1:ri2]#;sys.exit()
-                    regions+=all_regions[ri1+1:ri2]
-                if r2 not in regions:
-                    regions.append(r2) ### ending exon-region for this Ensembl/UCSC exon
-                if None in regions:
-                    print ens_transcriptid, r1, r2, regions, all_regions[ri1+1:ri2];sys.exit()
-                for r in regions:
+            start_end = [exon_start,exon_end]; start_end.sort(); start,end = start_end
+            partial_matches=[]
+            added=False
+            for region in all_exon_intron_regions: ### search each transcript exon against every annotated region
+                e5,e3 = all_exon_intron_regions[region]
+                annotated = [int(e5),int(e3)]
+                annotated.sort()
+                coords = [start_end[0],start_end[1]]+annotated
+                coords.sort()
+                if coords[0] == start_end[0] and coords[-1] == start_end[-1]:
+                    ### Hence, the exon/intron region is contained within or is equal to the transcript exon
                     if (gene,ens_transcriptid) in transcript_region_db:
-                        if r not in transcript_region_db[gene,ens_transcriptid] and 'I' not in r:
-                            transcript_region_db[gene,ens_transcriptid].append((r))
+                        if region not in transcript_region_db[gene,ens_transcriptid]:
+                            transcript_region_db[gene,ens_transcriptid].append((region))
                     else:
-                        transcript_region_db[gene,ens_transcriptid] = [r]
+                        transcript_region_db[gene,ens_transcriptid] = [region]
+                    added=True
+                    retainedIntrons+=1
+                else:
+                    if annotated[0] == start_end[0] or annotated[-1] == start_end[-1]:
+                        #print exon_start,exon_end, start_end, region, ens_transcriptid
+                        partial_matches.append(region)
+            if added ==False:
+                if len(partial_matches)>0:
+                    ### Occurs typically when a UCSC exon has a longer or shorter 3' or 5'UTR exon boundaries
+                    for region in partial_matches:
+                        if (gene,ens_transcriptid) in transcript_region_db:
+                            if region not in transcript_region_db[gene,ens_transcriptid]:
+                                transcript_region_db[gene,ens_transcriptid].append((region))
+                        else:
+                            transcript_region_db[gene,ens_transcriptid] = [region]
+                else:
+                    transcripts_with_missing_regions[ens_transcriptid]=None
+                    errorCount+=1
+                    #if errorCount<100: print 'Error:',key, exon_start,exon_end,ens_exonid
         if (gene,ens_transcriptid) in transcript_region_db:
             regions = transcript_region_db[gene,ens_transcriptid]
             regions_sort=[]
@@ -2232,14 +2243,14 @@ def exportTranscriptExonIDAssociations(species):
                 regions_sort.append([start,region])
             regions_sort.sort()
             if strand_db[gene] == '-':regions_sort.reverse()
-            transcript_region_db[gene,ens_transcriptid] = map(lambda (s,r): r, regions_sort)    
+            transcript_region_db[gene,ens_transcriptid] = map(lambda (s,r): r, regions_sort)
+            #print gene, ens_transcriptid, transcript_region_db[gene,ens_transcriptid];sys.exit()
     print len(transcripts_with_missing_regions), 'transcripts with missing exon regions out of', len(transcript_region_db)+len(transcripts_with_missing_regions)
 
     t1=[]
     for i in transcripts_with_missing_regions:
         t1.append(i)
     print 'missing:',t1[:15]
-    
 
     exon_db={}
     gene_region_db={}
@@ -2339,7 +2350,7 @@ def identifyPCRregions(species,platform,uid,inclusion_junction,exclusion_junctio
     except Exception:
         gene_transcript_structure, protein_db = importTranscriptExonIDs(species)
         print_outs = True
-        
+
     gene,region = string.split(uid,':')
     isoform_db = copy.deepcopy(gene_transcript_structure[gene])
     
@@ -2348,6 +2359,21 @@ def identifyPCRregions(species,platform,uid,inclusion_junction,exclusion_junctio
     ids = [gene]
     query = "select uid, sequence from ExonSeq where gene = ?"
     uid_sequence_list = SQLInterface.retreiveDatabaseFields(conn,ids,query)
+    
+    ex1,ex2 = string.split(exclusion_junction,'-')
+    ex1b,ex2b = string.split(inclusion_junction,'-')
+
+    exon_seq_db={}
+    for (uid1,seq) in uid_sequence_list:
+        exon_seq_db[uid1] = seq
+    try: 
+        print '('+ex1+')'+exon_seq_db[gene+':'+ex1]
+        print '('+ex2+')'+exon_seq_db[gene+':'+ex2]
+        print '('+ex1b+')'+exon_seq_db[gene+':'+ex1b]
+        print '('+ex2b+')'+exon_seq_db[gene+':'+ex2b]
+    except Exception:
+        pass
+    
     if print_outs == True:
         #"""
         for (uid1,seq) in uid_sequence_list:
@@ -2364,22 +2390,31 @@ def identifyPCRregions(species,platform,uid,inclusion_junction,exclusion_junctio
         mRNA2_s = isoform_db[mRNA2]
     except Exception:
         mRNA2_s = string.replace(exclusion_junction,'-','|')
-    
-    ex1,ex2 = string.split(exclusion_junction,'-')
-    print ex1,ex2,[mRNA1_s],[mRNA2_s]
+
+    print ex1,ex2
+    print [mRNA1_s]
+    print [mRNA2_s]
     if mRNA1_s != None:
         ex1_pos = string.find(mRNA1_s,ex1+'|') ### This is the location in the string where the exclusion junctions starts
         ex1_pos = ex1_pos+1+string.find(mRNA1_s[ex1_pos:],'|') ### This is the location in the string where the inclusion exon starts
         ex2_pos = string.find(mRNA1_s,ex2+'|')-1 ### This is the location in the string where the inclusion exon ends
+    print ex2_pos, ex1_pos
     if ex2_pos<ex1_pos:
         if mRNA2_s != None:
             mRNA1_s = mRNA2_s
-            mRNA1 = mRNA2
+            #mRNA1 = mRNA2
             ex1_pos = string.find(mRNA1_s,ex1+'|') ### This is the location in the string where the exclusion junctions starts
             ex1_pos = ex1_pos+1+string.find(mRNA1_s[ex1_pos:],'|') ### This is the location in the string where the inclusion exon starts
             ex2_pos = string.find(mRNA1_s,ex2+'|')-1 ### This is the location in the string where the inclusion exon ends
+    if abs(ex1_pos-ex2_pos)<2:
+        ### Incorrect isoform assignments resulting in faulty primer design
+        if ex1b+'|' in mRNA2_s and ex2b+'|' in mRNA2_s:
+            ex1 = ex1b
+            ex2 = ex2b
+            ex1_pos = string.find(mRNA1_s,ex1+'|') ### This is the location in the string where the exclusion junctions starts
+            ex1_pos = ex1_pos+1+string.find(mRNA1_s[ex1_pos:],'|') ### This is the location in the string where the inclusion exon starts
+            ex2_pos = string.find(mRNA1_s,ex2+'|')-1 ### This is the location in the string where the inclusion exon ends      
 
-    print ex1_pos,ex2_pos
     inclusion_exons = string.split(mRNA1_s[ex1_pos:ex2_pos],'|') ### These are the missing exons from the exclusion junction (in between)
     #if '-' in mRNA1_s:
     common_exons5p = string.split(mRNA1_s[:ex1_pos-1],'|') ### Flanking full 5' region (not just the 5' exclusion exon region)
@@ -2396,6 +2431,7 @@ def identifyPCRregions(species,platform,uid,inclusion_junction,exclusion_junctio
         print common_exons5p, common_exons3p
         print mRNA1_s, ex2_pos, ex1, ex2
         sys.exit()
+
     inclusion_exons = map(lambda x: gene+':'+x, inclusion_exons) ### add geneID prefix
     common_exons5p = map(lambda x: gene+':'+x, common_exons5p) ### add geneID prefix
     common_exons3p = map(lambda x: gene+':'+x, common_exons3p) ### add geneID prefix
@@ -2420,8 +2456,11 @@ def identifyPCRregions(species,platform,uid,inclusion_junction,exclusion_junctio
     #sys.exit()
     ### Get the common flanking and inclusion transcript sequence
     #print common_exons5p,common_exons3p;sys.exit()
+    print 1
     common_5p_seq = grabTranscriptSeq(common_exons5p,uid_seq_db)
+    print 2
     common_3p_seq = grabTranscriptSeq(common_exons3p,uid_seq_db)
+    print 3
     inclusion_seq = grabTranscriptSeq(inclusion_exons,uid_seq_db)
     print 'common_5p_seq:',[common_5p_seq]
     print 'common_3p_seq:',[common_3p_seq]
@@ -2499,7 +2538,8 @@ def grabTranscriptSeq(exons,uid_seq_db):
     seq=''
     #print exons
     for uid in exons:
-        seq += uid_seq_db[uid]
+        try: seq += uid_seq_db[uid]
+        except Exception: break ### MISSING SEQUENCE FROM THE DATABASE - OFTEN OCCURS IN THE LAST FEW EXONS - UNCLEAR WHY
     return seq
 
 def exportPrimerInputSeq(sequence,include_region,target_region):
@@ -2573,15 +2613,16 @@ def importComparisonSplicingData4Primers(filename,species):
                     """ Update the code to work with PSI results files from the metaDataAnalysis script """
                     #UID,InclusionNotation,ClusterID,UpdatedClusterID,AltExons,EventAnnotation,Coordinates,ProteinPredictions,dPSI,rawp,adjp,avg1,avg2
                     uid = t[0]
+                    print uid
                     uid_objects = string.split(uid,':')
                     symbol = uid_objects[0]
                     junctions = string.join(uid_objects[1:],':')
                     junctions = string.split(junctions,'|')
-                    fold_change = abs(float(t[-5]))
-                    isoforms = t[7]
-                    splice_type = t[5]
-                    exonid = t[4]
-                #print symbol, fold_change,percent_exp,confirmed;sys.exit()
+                    fold_change = abs(float(t[9]))
+                    isoforms = t[8]
+                    splice_type = t[6]
+                    exonid = t[5]
+                #print symbol, junctions,fold_change,percent_exp,confirmed;sys.exit()
                 #if fold_change<2 and percent_exp>0.25 and (confirmed == 'yes'):
                 if fold_change < 50:
                     if 'alternative_polyA' not in splice_type and 'altPromoter' not in splice_type:
@@ -2593,10 +2634,14 @@ def importComparisonSplicingData4Primers(filename,species):
                         else:
                             j1, j2 = string.split(string.split(junctions,'|')[0],' vs. ')
                         #(-)alt-C-terminus,(-)AA:188(ENSP00000397452)->238(ENSP00000410667),(-)microRNA-target(hsa-miR-599:miRanda,hsa-miR-186:miRanda)
-                        iso1, iso2 = string.split(string.split(isoforms,'AA:')[1],')->')
-                        iso1 = string.split(iso1,'(')[1]
-                        iso2 = string.split(string.split(iso2,'(')[1],')')[0]
-                        #print iso1, iso2 
+                        try:
+                            iso1, iso2 = string.split(string.split(isoforms,'AA:')[1],')->')
+                            iso1 = string.split(iso1,'(')[1]
+                            iso2 = string.split(string.split(iso2,'(')[1],')')[0]
+                            #print iso1, iso2
+                        except:
+                            iso1 = ''
+                            iso2 = ''
                         #print j1, j2
                         #print symbol
                         try:
@@ -2608,7 +2653,7 @@ def importComparisonSplicingData4Primers(filename,species):
                         except Exception:
                             pass
                             print traceback.format_exc(),'\n'; #sys.exit()
-                    
+                        #sys.exit()
             except Exception:
                 #print traceback.format_exc(),'\n'#;sys.exit()
                 pass
@@ -2621,10 +2666,11 @@ if __name__ == '__main__':
     Data_type = 'ncRNA'
     Data_type = 'mRNA'
     #E6.1-E8.2 vs. E5.1-E8.3
-    filename = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Ichi/August.11.2017/LIMMA_comps.Aug.12.2017/PSI.RBM20.Het.vs.WTC.Aug.13.2018.txt'
+    filename = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Ichi/August.11.2017/Events-dPSI_0.0_rawp/PSI.R636S_Homo_vs_WTC-limma-updated-Domains2-filtered.txt'
+    #filename = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/PSI/Events-dPSI_0.1_adjp/PSI.U2AF1-like_vs_OthersQPCR.txt'
     #filename = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Ichi/Combined-junction-exon-evidence.txt'
     
-    #exportTranscriptExonIDAssociations(Species)
+    #exportTranscriptExonIDAssociations(Species);sys.exit()
     #createExonRegionSequenceDB(Species,'RNASeq'); sys.exit()
     importComparisonSplicingData4Primers(filename,Species); sys.exit()
     

@@ -154,16 +154,15 @@ def getEnsemblSQLDir(ensembl_version):
     except Exception:
         ens_species = species
         species_full = species
-    
+
     try: child_dirs, ensembl_species, ensembl_versions = getCurrentEnsemblSpecies(original_version)
     except Exception:
         print "\nPlease try a different version. This one does not appear to be valid."
         print traceback.format_exc();sys.exit()
     ensembl_sql_dir,ensembl_sql_description_dir = child_dirs[species_full]
-    
     return ensembl_sql_dir, ensembl_sql_description_dir
 
-def buildEnsemblRelationalTablesFromSQL(Species,configType,analysisType,externalDBName,ensembl_version,force):
+def buildEnsemblRelationalTablesFromSQL(Species,configType,analysisType,externalDBName,ensembl_version,force,buildCommand=None):
     import UI; import update; global external_xref_key_db; global species; species = Species
     global system_synonym_db; system_synonym_db={} ### Currently only used by GO-Elite
     global rewrite_existing; rewrite_existing = 'yes'; global all_external_ids; all_external_ids={}; global added_systems; added_systems={}
@@ -174,12 +173,11 @@ def buildEnsemblRelationalTablesFromSQL(Species,configType,analysisType,external
     global ensembl_build
     ensembl_sql_dir, ensembl_sql_description_dir = getEnsemblSQLDir(ensembl_version)
     ensembl_build = string.split(ensembl_sql_dir,'core')[-1][:-1]
-    
+
     sql_file_db,sql_group_db = importEnsemblSQLInfo(configType) ###Import the Config file with the files and fields to parse from the downloaded SQL files
     sql_group_db['Description'] = [ensembl_sql_description_dir]
     sq = EnsemblSQLInfo(ensembl_sql_description_dir, 'EnsemblSQLDescriptions', 'Description', '', '', '')
     sql_file_db['Primary',ensembl_sql_description_dir] = sq
-    
     output_dir = 'AltDatabase/ensembl/'+species+'/EnsemblSQL/'
     importEnsemblSQLFiles(ensembl_sql_dir,ensembl_sql_dir,sql_group_db,sql_file_db,output_dir,'Primary',force) ###Download and import the Ensembl SQL files
 
@@ -200,7 +198,8 @@ def buildEnsemblRelationalTablesFromSQL(Species,configType,analysisType,external
     if analysisType == 'AltAnalyzeDBs':
         ###Export data for Ensembl-External gene system
         buildTranscriptStructureTable()
-        
+        if buildCommand == 'exon':
+            return None
         ###Export transcript biotype annotations (e.g., NMD)
         exportTranscriptBioType()
         
@@ -243,6 +242,7 @@ def getEnsemblTranscriptSequences(ensembl_version,species,restrictTo=None):
             ensembl_cdnaseq_dir = getCurrentEnsemblSequences(ensembl_version,dirtype,ens_species)
             
         output_dir = 'AltDatabase/'+species + '/SequenceData/'
+        #print [ensembl_cdnaseq_dir]
         gz_filepath, status = update.download(ensembl_cdnaseq_dir,output_dir,'')
         if status == 'not-removed':
             try: os.remove(gz_filepath) ### Not sure why this works now and not before
@@ -1059,7 +1059,11 @@ def importEnsemblSQLFiles(ensembl_sql_dir,ensembl_sql_description_dir,sql_group_
             for sql_filepath in sql_filepaths: ### If multiple files for a single table, run all files (retain orginal filename)
                 print 'Processing:',filename
                 try:
-                    key_value_db = importPrimaryEnsemblSQLTables(sql_filepath,filename,sql_file_db[import_group,filename])
+                    try: key_value_db = importPrimaryEnsemblSQLTables(sql_filepath,filename,sql_file_db[import_group,filename])
+                    except Exception:
+                        if key_value_db == 'stable-combined-version':
+                            sql_filepaths == 'stable-combined-version'  ### This is a new issue in version 2.1.1 - temporary fix
+                            continue
                     """except IOError:
                         sql_filepaths = updateFiles(ensembl_sql_dir,output_dir,filename,'yes')
                         key_value_db = importPrimaryEnsemblSQLTables(sql_filepath,filename,sql_file_db[import_group,filename])"""
@@ -1155,7 +1159,10 @@ def updateFiles(ensembl_sql_dir,output_dir,filename,force):
         else: sql_filepaths = [output_dir + filename]
     if force == 'yes': ### Download the files, rather than re-use existing
         ftp_url = ensembl_sql_dir+filename + '.gz'
-        gz_filepath, status = update.download(ftp_url,output_dir,'')
+        try: gz_filepath, status = update.download(ftp_url,output_dir,'')
+        except Exception:
+            if 'stable' in filename:
+                sql_filepaths=[]
         if 'Internet' in status:
             index=1; status = ''; sql_filepaths=[]
             while index<10:
@@ -1199,7 +1206,9 @@ def importPrimaryEnsemblSQLTables(sql_filepath,filename,sfd):
     except NameError: external_xref_key_filter = 'no'
     
     #print filename, key_filter, external_filter, external_xref_key_filter
-    index_db = sfd.IndexDB(); key_name = sfd.Key(); entries=0
+    try: index_db = sfd.IndexDB(); key_name = sfd.Key(); entries=0
+    except Exception:
+        return 'stable-combined-version'
     if len(key_name)<1: key_value_db=[] ### No key, so store data in a list
     for line in open(fn,'rU').xreadlines():         
         data = cleanUpLine(line); data = string.split(data,'\t')

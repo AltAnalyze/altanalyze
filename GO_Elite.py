@@ -224,9 +224,10 @@ def moveMAPPFinderFiles(input_dir):
                 try: shutil.copyfile(fn, destination_dir)
                 except Exception:
                     print_out = "WARNING!!! Unable to move ORA results to an archived directory."
-                    try: UI.WarningWindow(print_out,' Exit ')
-                    except Exception: print print_out
-                    sys.exit()
+                    #print traceback.format_exc()
+                    print print_out
+                    #try: UI.WarningWindow(print_out,' Exit ')
+                    #except Exception: print print_out
                 proceed = 'no'
                 while proceed == 'no':
                     try: os.remove(fn); proceed = 'yes'
@@ -1643,7 +1644,7 @@ class SummaryResultsWindow:
         self.sf.pack(padx = 5, pady = 1, fill = 'both', expand = 1)
         self.frame = self.sf.interior()
         
-        txt=Text(self.frame,bg='gray')                    
+        txt=Text(self.frame,bg='light gray')                    
         txt.pack(expand=True, fill="both")
         txt.insert(END, 'Primary Analysis Finished....\n')
         txt.insert(END, '\nResults saved to:\n'+output_dir+'\n')
@@ -1849,10 +1850,12 @@ class Logger(object):
         self.log = open(log_file, "w")
 
     def write(self, message):
-        self.log = open(log_file, "a")
-        self.terminal.write(message)
-        self.log.write(message)
-        self.log.close()
+        try:
+            self.log = open(log_file, "a")
+            self.terminal.write(message)
+            self.log.write(message)
+            self.log.close()
+        except: pass
         
     def flush(self): pass
     
@@ -2240,7 +2243,7 @@ def commandLineRun():
 
     if len(resources)>1: resources_to_analyze = resources
     elif len(resources)>0: resources_to_analyze = resources[0]
-    
+
     species_full_original = species_full; species_code_original = species_code
     if image_export != None:
         if image_export == 'WikiPathways':
@@ -2248,7 +2251,7 @@ def commandLineRun():
             if wpid==None:
                 print 'Please provide a valid WikiPathways ID (e.g., WP1234)';sys.exit()
             if species_code==None:
-                print 'Please provide a valid species ID for an installed database (to install: --update Official --species Hs --version EnsMart62Plus)';sys.exit()
+                print 'Please provide a valid species ID for an installed database (to install: --update Official --species Hs --version EnsMart91Plus)';sys.exit()
             if criterion_input_folder==None:
                 print 'Please provide a valid file location for your input IDs (also needs to inlcude system code and value column)';sys.exit()
             from visualization_scripts import WikiPathways_webservice
@@ -2442,7 +2445,7 @@ def commandLineRun():
             try: species = species_names[species_code]
             except Exception: print 'Species code %s not found. Please add the species to the database.' % species_code; sys.exit()
             print "Starting to update databases for",species, string.join(update_method,',')
-            
+
             ### Update EntrezGene-GO Databases
             if 'EntrezGene' in update_method:
                 ncbi_go_file = file_location_defaults['EntrezGO'].Location(); status = 'null'
@@ -2750,8 +2753,11 @@ def commandLineRun():
         try:
             import UI
             species_dirs = UI.returnDirectoriesNoReplace('/Databases')
-        except Exception:
-            print '\nPlease install a species database (to install: python GO_Elite.py --update Official --species Hs --version EnsMart62Plus)';sys.exit()
+        except:
+            try:
+                species_dirs = UI.returnDirectoriesNoReplace('/AltDatabase')
+            except Exception:
+                print '\nPlease install a species database (to install: python GO_Elite.py --update Official --species Hs --version EnsMart62Plus)';sys.exit()
 
         print ''
         root = parent; runGOElite(mod)
@@ -2759,7 +2765,9 @@ def commandLineRun():
         print '\nInsufficient flags entered (requires --species, --input and --output)'; sys.exit()
     if 'metabolites' in update_method:
         import MetabolomicsParser
-        MetabolomicsParser.buildMetabolomicsDatabase(force) ### will update any installed species
+        try: MetabolomicsParser.buildMetabolomicsDatabase(force) ### will update any installed species
+        except:
+            print 'WARNING!!!! No metabolite database present... skipping metabolite build'
     sys.exit()
     
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ import export
 import math
 from stats_scripts import statistics
 import traceback
+import collections
 import junctionGraph
 
 """
@@ -61,7 +62,6 @@ def importMetaDataDescriptions(field_description_file):
 
 def prepareComparisonData(metadata_file,metadata_filters,groups_db,comps_db):
     """Import the metadata and include/exclude fields/samples based on the user inputs"""
-    
     firstLine = True
     samplesToRetain=[]
     samplesToRemove=[]
@@ -72,6 +72,7 @@ def prepareComparisonData(metadata_file,metadata_filters,groups_db,comps_db):
         data = line.rstrip()
         data = string.replace(data,'"','')
         values = string.split(data,'\t')
+        if len(values)==1: continue
         if firstLine:
             headers = values
             covariateIndex=None
@@ -88,8 +89,8 @@ def prepareComparisonData(metadata_file,metadata_filters,groups_db,comps_db):
         else:
             try:  covariateType =  values[covariateIndex]
             except Exception: covariateType = None
-
-            sampleID = values[uid_index] ### Must always be present
+            try: sampleID = values[uid_index] ### Must always be present
+            except: continue ### Typically caused by rows with no values or variable blank values
             if '.bed' in sampleID:
                 sampleID = string.replace(sampleID,'.bed','')
                 
@@ -118,7 +119,7 @@ def prepareComparisonData(metadata_file,metadata_filters,groups_db,comps_db):
                     ### If the covariateSamples key already present
                     if sample_value in md.FieldValues():
                         ### Hence, this sample is TRUE to the field name (e.g., diseaseX)
-                        sample_type = md.FieldName() 
+                        sample_type = md.FieldName()
                     else:
                         sample_type = 'Others'
                     if md.FieldName() in covariateSamples:
@@ -145,6 +146,9 @@ def prepareComparisonData(metadata_file,metadata_filters,groups_db,comps_db):
                                 samplesToRemove.append(sampleID)
                     except Exception: ### Sample value not a float
                         samplesToRemove.append(sampleID)
+    if len(samplesToRetain)==0 and len(samplesToRemove) ==0:
+        for sample_type in groups:
+            samplesToRetain+=groups[sample_type]
     #print len(list(set(samplesToRetain)))
     #print len(list(set(samplesToRemove)));sys.exit()
     for unique_donor_id in uniqueDB:
@@ -167,7 +171,8 @@ def prepareComparisonData(metadata_file,metadata_filters,groups_db,comps_db):
                     updated_samples.append(sample)
             #print len(updated_samples)
             groups[group_id] = updated_samples
-        groups_db[field] = covariateSamples[field]
+        if len(covariateSamples[field])>0:
+            groups_db[field] = covariateSamples[field]
     
     ### Determine comparisons
     for field in groups_db:
@@ -179,7 +184,7 @@ def prepareComparisonData(metadata_file,metadata_filters,groups_db,comps_db):
                 if group_id not in group_names:
                     group_names.append(group_id)
         if len(group_names) == 2:
-            if 'Others'== group_names[1]:
+            if 'Others'in group_names:
                 comps.append(tuple(group_names))
             if 'Others'not in group_names:
                 comps.append(tuple(group_names))
@@ -208,7 +213,10 @@ def importGroupsComps(groups_file):
     comps_db={}
     for line in open(groups_file,'rU').xreadlines():
         data = cleanUpLine(line)
-        sample,ID,group_name = string.split(data,'\t')
+        try: sample,ID,group_name = string.split(data,'\t')
+        except:
+            print [data]
+            print traceback.format_exc();sys.exit()
         sample = string.replace(sample,'.bed','')
         group_id_lookup[ID]=group_name
         try: initial_groups[group_name].append(sample)
@@ -280,8 +288,10 @@ class PSIData:
         else:
             return junction_type
 
-def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,comps_db,CovariateQuery,splicingEventTypes={}):
+def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,comps_db,
+                    CovariateQuery,splicingEventTypes={},suppressPrintOuts=False):
     ### filter the expression file for the samples of interest and immediately calculate comparison statistics
+
     firstLine = True
     group_index_db={}
     pval_summary_db={}
@@ -290,12 +300,21 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
     psi_annotations={}
     rootdir=export.findParentDir(input_file)
     #print rootdir;sys.exit()
-
+    if platform != 'PSI':
+        try:
+            import ExpressionBuilder
+            expressionDataFormat,increment,convertNonLogToLog = ExpressionBuilder.checkExpressionFileFormat(input_file)
+        except:
+            increment = 0
+            convertNonLogToLog=True
+    else:
+        convertNonLogToLog=True
+        
     try:
         gene_to_symbol,system_code = getAnnotations(species,platform)
         from import_scripts import OBO_import
         symbol_to_gene = OBO_import.swapKeyValues(gene_to_symbol)
-    except ZeroDivisionError: gene_to_symbol={}; system_code=''
+    except: gene_to_symbol={}; system_code=''
 
     for groups in comps_db:
         group1, group2 = groups
@@ -303,10 +322,11 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
         filename='ExpressionProfiles/'+string.join(groups,'_vs_')+'.txt'
         eo = export.ExportFile(rootdir+filename) ### create and store an export object for the comparison (for raw expression)
         export_object_db[groups] = eo
-    
+
     compared_ids={}
     row_count=0
     header_db={}
+    headers_compared={}
     for line in open(input_file,'rU').xreadlines():
         row_count+=1
         if '.bed' in line:
@@ -340,6 +360,7 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
                 g1_headers = map(lambda x: group1+':'+x,g1_headers)
                 g2_headers = map(lambda x: group2+':'+x,g2_headers)
                 eo.write(string.join(['UID']+g1_headers+g2_headers,'\t')+'\n')
+                #print (group1,group2),len(g1_headers),len(g2_headers)
                 header_db[(group1,group2)] = g1_headers, g2_headers
             index=0
             uid_header=0
@@ -362,15 +383,21 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
                 altexons = values[alt_exon_header]
                 protein_predictions = values[protein_prediction]
                 coordinates = values[coordinates_index]
-                event_annotation = values[event_annotation_index]
+                try: event_annotation = values[event_annotation_index]
+                except:
+                    continue ### Occurs with a filtered PSI value and no event annotation and anything follwoing
                 ps = PSIData(clusterID, altexons, event_annotation, protein_predictions, coordinates)
                 psi_annotations[uid]=ps
             group_expression_values={}
             original_group={}
+            
             for group in group_index_db:
                 sample_index_list = group_index_db[group]
-                if platform != 'PSI':
-                    filtered_values = map(lambda x: float(values[x]), sample_index_list) ### simple and fast way to reorganize the samples
+                if platform != 'PSI' and platform != 'methylation' and '' not in values and 'NA' not in values and len(values)==len(header):
+                    try: filtered_values = map(lambda x: float(values[x]), sample_index_list) ### simple and fast way to reorganize the samples
+                    except ValueError:
+                        ### Strings rather than values present - skip this row
+                        continue
                 else: ### for splice-event comparisons where there a missing values at the end of the row
                     if len(header) != len(values):
                         diff = len(header)-len(values)
@@ -381,24 +408,39 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
                         initial_filtered.append(values[x])
                     filtered_values=[]
                     for x in initial_filtered:
-                        if x != '':
+                        if x != '' and x!= 'NA':
                             filtered_values.append(float(x))
                         unfiltered.append(x)
                     #if uid == 'ENSG00000105321:E3.2-E4.2 ENSG00000105321:E2.3-E4.2' and 'inner cell mass' in group:
                     #print filtered_values;sys.exit()
-                if platform == 'PSI':
+                if platform == 'PSI' or platform == 'methylation':
                     original_group[group]=unfiltered
                 else:
                     original_group[group]=filtered_values
                 if platform == 'RNASeq':# or platform == 'miRSeq':
-                    filtered_values = map(lambda x: math.log(x+1,2),filtered_values) ### increment and log2 adjusted
+                    if convertNonLogToLog:
+                        filtered_values = map(lambda x: math.log(x+increment,2),filtered_values) ### increment and log2 adjusted
                 group_expression_values[group] = filtered_values
             for groups in comps_db:
                 group1,group2 = groups
                 g1_headers,g2_headers=header_db[groups]
-                data_list1 = group_expression_values[group1]
-                data_list2 = group_expression_values[group2]
+                header_samples = (tuple(g1_headers),tuple(g2_headers))
+                if header_samples not in headers_compared:
+                    headers_compared[header_samples]=[]
+                    if suppressPrintOuts==False:
+                        print len(g1_headers),len(g2_headers),groups
+                try:
+                    data_list1 = group_expression_values[group1]
+                except KeyError:
+                    ### This error is linked to the above Strings rather than values present error
+                    continue
+                try:
+                    data_list2 = group_expression_values[group2]
+                except:
+                    continue
                 combined = data_list1+data_list2
+                if g1_headers==0 or g2_headers==0:
+                    continue ### no samples matching the criterion
                 try: diff = max(combined)-min(combined) ### Is there any variance?
                 except Exception:
                     ### No PSI values for this splice-event and these groups
@@ -406,13 +448,17 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
                 if diff==0:
                     continue
                 elif (100.00*len(data_list1))/len(g1_headers)>=PercentExp and (100.00*len(data_list2))/len(g2_headers)>=PercentExp:
+                    if len(data_list1)<minSampleNumber or len(data_list2)<minSampleNumber:
+                        continue ### Don't analyze
                     compared_ids[uid]=[]
                     pass
                 else:
                     continue ### Don't analyze
+                #print len(g1_headers), len(g2_headers);sys.exit()
                 if (len(data_list1)>1 and len(data_list2)>1) or (len(g1_headers)==1 or len(g2_headers)==1): ### For splicing data
                     ### Just a One-Way ANOVA at first - moderation happens later !!!!
-                    try: p = statistics.runComparisonStatistic(data_list1,data_list2,probability_statistic) 
+                    try:
+                        p = statistics.runComparisonStatistic(data_list1,data_list2,probability_statistic)
                     except Exception: p = 1
                     avg1 = statistics.avg(data_list1)
                     avg2 = statistics.avg(data_list2)
@@ -452,8 +498,12 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
         export_object_db[groups].close()
     
     ### Calculate adjusted p-values for all pairwise comparisons
+    global_count=0
+    ensembls_found=False
+    try: to = export.ExportFile(rootdir+'/top50/MultiPath-PSI.txt')
+    except: pass
     for groups in pval_summary_db:
-        psi_results={}
+        psi_results = collections.OrderedDict()
         group1,group2 = groups
         group_comp_name = string.join(groups,'_vs_')
         if platform == 'PSI':
@@ -463,7 +513,17 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
         eo = export.ExportFile(rootdir+'/'+filename)
         #do = export.ExportFile(rootdir+'/Downregulated/'+filename)
         #uo = export.ExportFile(rootdir+'/Upregulated/'+filename)
-        so = export.ExportFile(rootdir+'PValues/'+CovariateQuery+'-'+string.join(groups,'_vs_')+'.txt')
+        try:
+            so = export.ExportFile(rootdir+'PValues/'+CovariateQuery+'-'+string.join(groups,'_vs_')+'.txt')
+        except IOError:
+            ### Occurs when the filename is too long - so we shorten this (not ideal)
+            groups2 = list(groups)
+            groups2[-1] = 'controls'
+            try:
+                so = export.ExportFile(rootdir+'PValues/'+CovariateQuery+'-'+string.join(groups2,'_vs_')+'.txt')
+            except IOError:
+                groups2[0] = groups2[0][:30] ### restrict to 30 characters
+                so = export.ExportFile(rootdir+'PValues/'+CovariateQuery+'-'+string.join(groups2,'_vs_')+'.txt')
         header = 'GeneID\tSystemCode\tLogFold\trawp\tadjp\tSymbol\tavg-%s\tavg-%s\n' % (group1,group2)
         if platform == 'PSI':
             header = 'UID\tInclusion-Junction\tEvent-Direction\tClusterID\tUpdatedClusterID\tAltExons\tEventAnnotation\tCoordinates\tProteinPredictions\tdPSI\trawp\tadjp\tavg-%s\tavg-%s\n' % (group1,group2)
@@ -472,16 +532,29 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
         #uo.write(header)
         so.write('Gene\tPval\n')
         pval_db = pval_summary_db[groups]
-        if 'moderated' in probability_statistic and pval_threshold<1:
+        if 'moderated' in probability_statistic: # and pval_threshold<1:
             try: statistics.moderateTestStats(pval_db,probability_statistic) ### Moderates the original reported test p-value prior to adjusting
             except Exception:
                 print 'Moderated test failed... using student t-test instead',group1,group2
                 #print traceback.format_exc()
         else:
             'Skipping moderated t-test...'
-        statistics.adjustPermuteStats(pval_db) ### sets the adjusted p-values for objects   
+        statistics.adjustPermuteStats(pval_db) ### sets the adjusted p-values for objects
+        
+        pval_sort=[]
         for uid in pval_db:
             gs = pval_db[uid]
+            pval_sort.append((gs.Pval(),uid))
+        pval_sort.sort()
+
+        ranked_count = 0
+        for (pval,uid) in pval_sort:
+            if ranked_count<11 and global_count<51:
+                try: to.write(uid+'\n')
+                except: pass
+            gs = pval_db[uid]
+            ranked_count+=1
+            global_count+=1
             group1_avg = str(group_avg_exp_db[group1][uid])
             group2_avg = str(group_avg_exp_db[group2][uid])
             if use_adjusted_p:
@@ -519,6 +592,18 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
                         psi_results[uid]=gs,group1_avg,group2_avg
                         ### Write these out once all entries for that gene have been parsed
                     else:
+                        if gs.LogFold()>0: fold = 'upregulated'
+                        else: fold = 'downregulated'
+                        try: splicingEventTypes[group_comp_name].append(fold)
+                        except Exception: splicingEventTypes[group_comp_name] = [fold]
+                        
+                        if 'ENS' in uid and ensembls_found==False:
+                            ensembls_found = True
+                        else:
+                            if 'ENS' not in uid:
+                                system_code = 'Sy'; symbol = uid
+                        if 'ENS' in uid:
+                            system_code = 'En'
                         values = string.join([uid,system_code,str(gs.LogFold()),str(gs.Pval()),str(gs.AdjP()),symbol,group1_avg,group2_avg],'\t')+'\n'
                         eo.write(values)
                     proceed = True
@@ -560,15 +645,35 @@ def performDifferentialExpressionAnalysis(species,platform,input_file,groups_db,
                 
                 try: splicingEventTypes[group_comp_name].append((ps.ClusterID(),event_direction,ps.EventAnnotation()))
                 except Exception: splicingEventTypes[group_comp_name] = [(ps.ClusterID(),event_direction,ps.EventAnnotation())]
+
         eo.close()
         #do.close()
         #uo.close()
         so.close()
+        to.close()
     print len(compared_ids),'unique IDs compared (denominator).'
     return rootdir, splicingEventTypes
 
+def outputGeneExpressionSummaries(rootdir,DEGs):
+    eo = export.ExportFile(rootdir+'/gene_summary.txt')
+    header = ['ComparisonName','RegulatedGenes','Upregulated','Downregulated']
+    eo.write(string.join(header,'\t')+'\n')
+    for comparison in DEGs:
+        folds={}
+        genes = DEGs[comparison]
+        for fold in genes:
+            try: folds[fold]+=1
+            except Exception: folds[fold]=1
+        try: up = folds['upregulated']
+        except: up = 0
+        try: down = folds['downregulated']
+        except: down = 0
+        eo.write(string.join([comparison,str(len(genes)),str(up),str(down)],'\t')+'\n')
+    eo.close()
+    
 def outputSplicingSummaries(rootdir,splicingEventTypes):
-    eo = export.ExportFile(rootdir+'/event_summary.txt')
+    events_file = rootdir+'/event_summary.txt'
+    eo = export.ExportFile(events_file)
     header = ['ComparisonName','UniqueJunctionClusters','InclusionEvents','ExclusionEvents']
     header+= ["alt-3'_exclusion","alt-3'_inclusion","alt-5'_exclusion","alt-5'_inclusion"]
     header+= ["alt-C-term_exclusion","alt-C-term_inclusion","altPromoter_exclusion","altPromoter_inclusion"]
@@ -638,6 +743,21 @@ def outputSplicingSummaries(rootdir,splicingEventTypes):
         values = string.join(values,'\t')+'\n'
         eo.write(values)
     eo.close()
+    graphics = []
+    try:
+        from visualization_scripts import clustering
+        parent_dir = export.findParentDir(events_file)
+        parent_dir = export.findParentDir(parent_dir[:-1])
+        OutputFile1 = parent_dir+'/SpliceEvent-Types.png'
+        clustering.stackedbarchart(events_file,display=False,output=OutputFile1)
+        OutputFile2 = parent_dir+'/SignificantEvents.png'
+        index1=2;index2=3; x_axis='Number of Alternative Events'; y_axis = 'Comparisons'; title='MultiPath-PSI Alternative Splicing Events'
+        clustering.barchart(events_file,index1,index2,x_axis,y_axis,title,display=False,color1='Orange',color2='SkyBlue',output=OutputFile2)
+        graphics.append(['SpliceEvent-Types',OutputFile1])
+        graphics.append(['Significant MultiPath-PSI Events',OutputFile2])
+    except Exception:
+        print traceback.format_exc()
+    return graphics
             
 def getAltID(uid):
     altID = string.replace(uid,'hsa-mir-','MIR')
@@ -654,7 +774,8 @@ def getAltID(uid):
 def getAnnotations(species,platform):
     import gene_associations
     if platform == 'RNASeq' or platform == 'PSI' or platform == 'miRSeq':
-        gene_to_symbol = gene_associations.getGeneToUid(species,('hide','Ensembl-Symbol'))
+        try: gene_to_symbol = gene_associations.getGeneToUid(species,('hide','Ensembl-Symbol'))
+        except Exception: gene_to_symbol={}
         system_code = 'En'
         if platform == 'miRSeq':
             from import_scripts import OBO_import
@@ -1190,6 +1311,31 @@ def synapseDirectoryUpload(expressionDir, parent_syn, executed_urls, used):
                 ### These are the GO-Elite result files (not folders)
                 synapseStore(files,dir_path_level3,sub_parent3,executed_urls,used)
 
+def exportUpDownGenes(results_dir):
+    files = os.listdir(results_dir)
+    for file in files:
+        filename = results_dir+'/'+file
+        output_dir = results_dir+'/regulated/'+file
+        firstLine=True
+        if '.txt' in filename and 'GE.' in filename:
+            ou = export.ExportFile(output_dir[:-4]+'-up.txt')
+            od = export.ExportFile(output_dir[:-4]+'-down.txt')
+            for line in open(filename,'rU').xreadlines():
+                data = line.rstrip()
+                values = string.split(data,'\t')
+                if firstLine:
+                    firstLine=False
+                    ou.write(line)
+                    od.write(line)
+                    lfi = values.index('LogFold')
+                else:
+                    if float(values[lfi]) >0:
+                        ou.write(line)
+                    else:
+                        od.write(line)
+            ou.close()
+            od.close()
+                    
 def exportGeneSetsFromCombined(filename):
     firstLine=True
     synapse_format = True
@@ -1277,7 +1423,11 @@ def exportGeneSetsFromCombined(filename):
         ro.close()
     aro.close()
 
-def remoteAnalysis(species,expression_file,groups_file,platform='PSI',log_fold_cutoff=0.1,use_adjusted_pval=True,pvalThreshold=0.05):
+def remoteAnalysis(species,expression_file,groups_file,platform='PSI',log_fold_cutoff=0.1,
+                use_adjusted_pval=True,pvalThreshold=0.05,use_custom_output_dir='',
+                suppressPrintOuts=False):
+    
+    print "Performing a differential expression analysis (be patient)..."
     global pval_threshold
     global PercentExp
     global restricted_gene_denominator
@@ -1285,14 +1435,19 @@ def remoteAnalysis(species,expression_file,groups_file,platform='PSI',log_fold_c
     global probability_statistic
     global use_adjusted_p
     global logfold_threshold
+    global minSampleNumber
+    minSampleNumber = 2
     logfold_threshold = log_fold_cutoff
     use_adjusted_p = use_adjusted_pval
     global_adjp_db={}
     restricted_gene_denominator={}
     probability_statistic = 'moderated t-test'
     PercentExp = 0.5
-    CovariateQuery = 'Events'
-    pval_threshold = pvalThreshold
+    if platform == 'PSI':
+        CovariateQuery = 'Events'
+    else:
+        CovariateQuery = 'DEGs'
+    pval_threshold = float(pvalThreshold)
     metadata_files = [groups_file]
     meta_description_file = None
     
@@ -1338,14 +1493,19 @@ def remoteAnalysis(species,expression_file,groups_file,platform='PSI',log_fold_c
 
     for i in all_groups_db:
         #print i
-        for k in all_groups_db[i]: print '  ',k,'\t',len(all_groups_db[i][k])
+        for k in all_groups_db[i]:
+            if suppressPrintOuts == False:
+                print '  ',k,'\t',len(all_groups_db[i][k])
     #print all_comps_db
     
     if platform == 'PSI':
         result_type = 'dPSI'
     else:
         result_type = 'LogFold'
-    if use_adjusted_p:
+    
+    if len(use_custom_output_dir)>0:
+        CovariateQuery = use_custom_output_dir
+    elif use_adjusted_p:
         CovariateQuery += '-'+result_type+'_'+str(logfold_threshold)[:4]+'_adjp'
     else:
         CovariateQuery += '-'+result_type+'_'+str(logfold_threshold)+'_rawp'
@@ -1353,16 +1513,175 @@ def remoteAnalysis(species,expression_file,groups_file,platform='PSI',log_fold_c
     for specificCovariate in all_groups_db:
         comps_db = all_comps_db[specificCovariate]
         groups_db = all_groups_db[specificCovariate]
-        rootdir,splicingEventTypes = performDifferentialExpressionAnalysis(species,platform,expression_file,groups_db,comps_db,CovariateQuery,splicingEventTypes)
+        rootdir,splicingEventTypes = performDifferentialExpressionAnalysis(species,platform,expression_file,
+                groups_db,comps_db,CovariateQuery,splicingEventTypes,suppressPrintOuts=suppressPrintOuts)
 
     if platform == 'PSI':
-        outputSplicingSummaries(rootdir+'/'+CovariateQuery,splicingEventTypes)
-        
+        graphics = outputSplicingSummaries(rootdir+'/'+CovariateQuery,splicingEventTypes)
+    else:
+        graphics=[]
+        outputGeneExpressionSummaries(rootdir+'/'+CovariateQuery,splicingEventTypes)
+        #except: pass
+    return graphics
+
+def compareDomainComposition(folder):
+    ### Compare domain composition
+
+    import collections
+    event_db = collections.OrderedDict()
+    background_db = collections.OrderedDict()
+    groups_list=['']
+    import UI
+    files = UI.read_directory(folder)
+    for file in files:
+        if '.txt' in file and 'PSI.' in file:
+            db={}
+            event_db[file[:-4]]=db
+            all_unique_events = {}
+            background_db[file[:-4]]=all_unique_events
+            groups_list.append(file[:-4])
+            fn = folder+'/'+file
+            firstLine = True
+            output_file = fn[:-4]+'-ProteinImpact.txt'
+            output_file = string.replace(output_file,'PSI.','Impact.')
+            eo = export.ExportFile(output_file)
+            eo.write('GeneSymbol\tSy\tImpact\tImpactDescription\tUID\n')
+            for line in open(fn,'rU').xreadlines():
+                data = line.rstrip()
+                t = string.split(data,'\t')
+                #(+)alt-coding, (+)AA:232(ENSP00000230685)->296(ENSP00000009530)|(-)MHC_II-assoc_invar_chain-IPR022339, (+)DISULFID, (+)DOMAIN-Thyroglobulin type-1, (+)HELIX, (+)MHC_II-assoc_invar_chain-IPR022339, (+)SITE-Breakpoint for translocation to form a CD74-ROS1 fusion protein, (+)STRAND, (+)TOPO_DOM-Extracellular, (+)TURN, (+)Thyroglobulin_1-IPR000716
+                if firstLine:
+                    protein_index = t.index('ProteinPredictions')
+                    clusterID_index = t.index('UpdatedClusterID')
+                    event_index = t.index('EventAnnotation')
+                    firstLine= False
+                    continue
+                uid = t[0]
+                symbol = string.split(uid,':')[0]
+                clusterID=t[clusterID_index]
+                all_unique_events[clusterID]=None
+                if len(t[protein_index])>0:
+                    protein_prediction = t[protein_index]
+                    protein_predictions = string.split(protein_prediction,',')
+                    if 'Promoter' in t[event_index]:
+                        continue
+                    for annotation in protein_predictions:
+                        if 'AA:' in annotation: 
+                            if annotation[0]==' ':
+                                direction = annotation[2]
+                                diff = string.split(annotation[7:],'|')[0]
+                            else:
+                                direction = annotation[1]
+                                diff = string.split(annotation[6:],'|')[0]
+                            
+                            try: diff1,diff2 = string.split(diff,'->')
+                            except:
+                                diff1,diff2 = string.split(diff,'+>')
+                            try: diff1 = int(string.split(diff1,'(')[0])
+                            except: print diff,diff1,diff2,[annotation];sys.exit()
+                            diff2 = int(string.split(diff2,'(')[0])
+                            coding_diff = (diff1)/float(diff2)
+                            if coding_diff < 0.333:
+                                type = 'Truncation'
+                            elif coding_diff < 0.75:
+                                type = 'Protein Length'
+                            else:
+                                type = None
+                            if '|' in annotation:
+                                domain_difference = True
+                            else:
+                                domain_difference = False
+                            if type==None and domain_difference == False:
+                                pass
+                            else:
+                                if direction == '+':
+                                    direction = 'decreased' ### seems counter intuitive but we are specificall looking at decreased protein length
+                                    """ specifically, if a (+)200->1000, this means in the experiment the protein is longer but truncation is decreased """
+                                elif direction == '-':
+                                    direction = 'increased'
+                                if direction != '~':
+                                    if type == 'Truncation':
+                                        score = 2
+                                    elif domain_difference:
+                                        score = 1
+                                    elif type == 'Protein Length':
+                                        score = 0.5
+                                    if direction == 'decreased':
+                                        score = score*-1
+                                    if type != None:
+                                        updated_type = type
+                                        if domain_difference:
+                                            updated_type += '|domain-impact'
+                                    else:
+                                        updated_type = ''
+                                        if domain_difference:
+                                            updated_type += 'domain-impact'
+                                    eo.write(string.join([symbol,'Sy',str(score),updated_type,uid],'\t')+'\n')
+                                    db[clusterID]=type,domain_difference,direction
+                            continue
+
+    eo = export.ExportFile(folder+'/Protein-Level-Impact-Summary.txt')
+    file_list = []
+    for file in event_db:
+        file_list.append(file)
+        domain_difference_db={}
+        impact_type_db={}
+        impacted_events = event_db[file]
+        for clusterID in impacted_events:
+            type,domain_difference,direction = impacted_events[clusterID]
+            ### Create the entries in the dictionary so these can be consistently populated below
+            if domain_difference!=False:
+                domain_difference_db[direction,domain_difference]=[]
+            if type !=None:
+                impact_type_db[direction,type]=[]
+
+    for file in event_db:
+        impacted_events = event_db[file]
+        unique_events = len(background_db[file])
+        file_domain_difference_db={}
+        file_impact_type_db={}
+        for clusterID in impacted_events:
+            type,domain_difference,direction = impacted_events[clusterID]
+            try:
+                if domain_difference!=False:
+                    file_domain_difference_db[direction,domain_difference]+=1
+                if type!=None:
+                    file_impact_type_db[direction,type]+=1
+            except:
+                if domain_difference!=False:
+                    file_domain_difference_db[direction,domain_difference]=1
+                if type!=None:
+                    file_impact_type_db[direction,type]=1
+
+        for (direction,type) in impact_type_db:
+            try: impact_type_db[direction,type].append(str(file_impact_type_db[direction,type]/float(unique_events)))
+            except: impact_type_db[direction,type].append('0')
+        for (direction,domain_difference) in domain_difference_db: 
+            try: domain_difference_db[direction,domain_difference].append(str(file_domain_difference_db[direction,domain_difference]/float(unique_events)))
+            except: domain_difference_db[direction,domain_difference].append('0')
+            
+    eo.write(string.join(['UID']+file_list,'\t')+'\n')
+    for (direction,domain_difference) in domain_difference_db:
+            out = [direction+' Domain Impact']+domain_difference_db[direction,domain_difference]
+            out = string.join(map(str,out),'\t')+'\n'
+
+            eo.write(out)
+    for (direction,type) in impact_type_db:
+            out = [direction+' '+type]+impact_type_db[direction,type]
+            out = string.join(map(str,out),'\t')+'\n'
+            #print file, out, unique_events;sys.exit()
+            eo.write(out)
+    eo.close()
+    sys.exit()
+    
 if __name__ == '__main__':
     species = 'Hs';
     expression_file = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Kumar/July-26-2017/Hs_RNASeq_top_alt_junctions-PSI_EventAnnotation.txt'
     groups_file = '/Users/saljh8/Desktop/dataAnalysis/Collaborative/Kumar/July-26-2017/groups.KD.txt'
+    computed_results_dir = '/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/Leucegene/July-2017/PSI/SpliceICGS.R1.Depleted.12.27.17/all-depleted-and-KD'
+    #exportUpDownGenes('/Users/saljh8/Desktop/dataAnalysis/SalomonisLab/cellHarmony-evaluation/HCA-alignment/DEGs');sys.exit()
     #remoteAnalysis(species,expression_file,groups_file,platform='PSI',log_fold_cutoff=0.1,use_adjusted_pval=True,pvalThreshold=0.05);sys.exit()
+    #compareDomainComposition(computed_results_dir)
     ################  Comand-line arguments ################
     #buildAdditionalMirTargetGeneSets();sys.exit()
     filename = '/Users/saljh8/Desktop/PCBC_MetaData_Comparisons/eXpress/CombinedResults/allTopGenes.txt' #DiffStateComps Reprogramming
@@ -1371,9 +1690,12 @@ if __name__ == '__main__':
     platform='RNASeq'
     species='Hs'
     probability_statistic = 'moderated t-test'
+    #probability_statistic = 'Kolmogorov Smirnov'
     #probability_statistic = 'unpaired t-test'
+    #probability_statistic = 'paired t-test'
     minRPKM=-1000
     PercentExp = 75
+    minSampleNumber = 2
     logfold_threshold=math.log(2,2)
     pval_threshold=0.05
     use_adjusted_p = False
@@ -1395,7 +1717,7 @@ if __name__ == '__main__':
     restricted_gene_denominator={}
     global_adjp_db={}
     splicingEventTypes={}
-    CovariateQuery = 'Events'
+    CovariateQuery = None
     log_fold_cutoff=None
     print sys.argv[1:]
     import getopt
@@ -1405,7 +1727,7 @@ if __name__ == '__main__':
     else:
         options, remainder = getopt.getopt(sys.argv[1:],'', ['m=','i=','d=','c=','u=','p=','s=','f=',
             'g=','e=','ce=','rc=','cd=','o=','md=','in=','target=','parent=','urls=','used=','mf=',
-            'adjp=','dPSI=','pval=','percentExp='])
+            'adjp=','dPSI=','pval=','percentExp=','percentExp=', 'fold=', 'species=', 'platform=', 'expdir='])
         for opt, arg in options:
             if opt == '--m': metadata_files.append(arg)
             if opt == '--o':
@@ -1413,15 +1735,17 @@ if __name__ == '__main__':
                     output_dir = arg
                 else:
                     output_dir = [output_dir,arg]
-            if opt == '--i': expression_files.append(arg)
+            if opt == '--i' or opt == '--expdir': expression_files.append(arg)
             if opt == '--e': runGOElite=True
-            if opt == '--f': logfold_threshold = math.log(float(arg),2)
+            if opt == '--f' or opt == '--fold':
+                try: logfold_threshold = math.log(float(arg),2)
+                except Exception: logfold_threshold = 0
             if opt == '--ce': compareEnrichmentProfiles = True
             if opt == '--d': sampleSetQuery=arg
             if opt == '--c': CovariateQuery=arg
-            if opt == '--p': platforms.append(arg)
+            if opt == '--p' or opt == '--platform': platforms.append(arg)
             if opt == '--g': gender_restricted=arg
-            if opt == '--s': species=arg
+            if opt == '--s' or opt == '--species': species=arg
             if opt == '--rc': restrictCovariateTerm=arg
             if opt == '--cd': compDiffState=arg
             if opt == '--md': mirDataDir=arg
@@ -1432,7 +1756,7 @@ if __name__ == '__main__':
             if opt == '--parent': parent_syn=arg
             if opt == '--urls': executed_urls.append(arg) ### options are: all, junction, exon, reference
             if opt == '--used': used.append(arg)
-            if opt == '--percentExp': PercentExp = int(PercentExp)
+            if opt == '--percentExp': PercentExp = int(arg)
             if opt == '--adjp':
                 if string.lower(arg) == 'yes' or string.lower(arg) == 'true':
                     use_adjusted_p = True
@@ -1492,6 +1816,11 @@ if __name__ == '__main__':
             logfold_threshold=math.log(1,2)
         print 'Filtering on adjusted p-value:',use_adjusted_p
 
+        if platform == 'PSI' and CovariateQuery == None:
+            CovariateQuery = 'Events'
+        else:
+            CovariateQuery = 'DEGs'
+        
         if platform != 'PSI':
             from build_scripts import EnsemblImport
             try: gene_location_db = EnsemblImport.getEnsemblGeneLocations(species,platform,'key_by_array')
@@ -1541,7 +1870,11 @@ if __name__ == '__main__':
             rootdir,splicingEventTypes = performDifferentialExpressionAnalysis(species,platform,expression_file,groups_db,comps_db,CovariateQuery,splicingEventTypes)
 
         if platform == 'PSI':
-            outputSplicingSummaries(rootdir+'/'+CovariateQuery,splicingEventTypes)
+            graphics = outputSplicingSummaries(rootdir+'/'+CovariateQuery,splicingEventTypes)
+        else:
+            outputGeneExpressionSummaries(rootdir+'/'+CovariateQuery,splicingEventTypes)
+            #except: pass
+            
         sys.exit()
         for CovariateQuery in covariate_set:
           for sampleSetQuery in Sample_set:

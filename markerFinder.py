@@ -158,7 +158,7 @@ def rhoCalculation(data_list1,tissue_template):
                 kill
     except Exception:
         rho = pearson(data_list1,tissue_template)
-        return rho
+        return rho, 'Null'
 
 def simpleScipyPearson(query_lists,reference_list):
     """ Get the top correlated values referenced by index of the query_lists (e.g., data matrix) """
@@ -337,6 +337,7 @@ def reorderInputFile(custom_path,marker_list,marker_condition_db):
     ### Over-write read in file
     export_obj = export.ExportFile(custom_path)
     export_obj.write(header)
+    marker_list.reverse() ### Reverse the order of the MarkerFinder results
     for uid in marker_list:
         condition = marker_condition_db[uid]
         new_uid = condition+':'+uid
@@ -407,6 +408,7 @@ def generateMarkerHeatMaps(fl,platform,convertNonLogToLog=False,graphics=[],Spec
             gsp.setNormalize('median')
             gsp.setGeneSelection('')
             gsp.setClusterGOElite('GeneOntology')
+            #gsp.setClusterGOElite('BioMarkers')
             """
             print custom_path
             print graphics
@@ -416,7 +418,8 @@ def generateMarkerHeatMaps(fl,platform,convertNonLogToLog=False,graphics=[],Spec
             """
             reload(clustering)
             try:
-                graphics = clustering.runHCexplicit(custom_path, graphics, row_method, row_metric, column_method, column_metric, color_gradient, gsp, display=False)
+                graphics = clustering.runHCexplicit(custom_path, graphics, row_method, row_metric,
+                                    column_method, column_metric, color_gradient, gsp, contrast=4, display=False)
             except Exception:
                 print traceback.format_exc()
                 print 'Error occured in generated MarkerGene clusters... see ExpressionOutput/MarkerFinder files.'
@@ -449,7 +452,7 @@ def verifyFileLength(filename):
     except Exception: null=[]
     return count
     
-def analyzeData(filename,Species,Platform,codingType,geneToReport=60,correlateAll=True,AdditionalParameters=None,logTransform=False):
+def analyzeData(filename,Species,Platform,codingType,geneToReport=60,correlateAll=True,AdditionalParameters=None,logTransform=False,binarize=False):
     global genesToReport; genesToReport = geneToReport
     global correlateAllGenes; correlateAllGenes = correlateAll
     global all_genes_ranked; all_genes_ranked={}
@@ -550,7 +553,7 @@ def analyzeData(filename,Species,Platform,codingType,geneToReport=60,correlateAl
         for cluster_comp_db in cluster_comps:
             ###Interate through each comparison
             print 'Iteration',iteration,'of',len(cluster_comps)
-            tissue_specific_IDs,interim_correlations,annotation_headers,tissues = identifyMarkers(filename,cluster_comp_db)
+            tissue_specific_IDs,interim_correlations,annotation_headers,tissues = identifyMarkers(filename,cluster_comp_db,binarize=binarize)
             iteration+=1
             for tissue in tissue_specific_IDs:
                 if tissue not in tissue_specific_IDs_combined: ### Combine the tissue results from all of the cluster group analyses, not over-writing the existing 
@@ -569,7 +572,7 @@ def analyzeData(filename,Species,Platform,codingType,geneToReport=60,correlateAl
         original_tissue_headers2 = original_tissue_headers ### The last function will overwrite the group~ replacement
         #identifyMarkers(filename,[]) ### Used to get housekeeping genes for all conditions
     else:
-        tissue_specific_IDs,interim_correlations,annotation_headers,tissues = identifyMarkers(filename,[])
+        tissue_specific_IDs,interim_correlations,annotation_headers,tissues = identifyMarkers(filename,[],binarize=binarize)
         original_tissue_headers2 = original_tissue_headers
     ### Add a housekeeping set (genes that demonstrate expression with low variance
     housekeeping.sort(); ranked_list=[]; ranked_lookup=[]; tissue = 'Housekeeping'
@@ -630,7 +633,7 @@ def getReplicateData(expr_input,t):
         if '~' not in i:splitHeaders=True
 
     ### use comps in the future to visualize group comparison changes
-    sample_list,group_sample_db,group_db,group_name_sample_db,comp_groups,comps_name_db = ExpressionBuilder.simpleGroupImport(groups_dir,splitHeaders=splitHeaders)
+    sample_list,group_sample_db,group_db,group_name_sample_db,comp_groups,comps_name_db = ExpressionBuilder.simpleGroupImport(groups_dir,splitHeaders=splitHeaders, ignoreComps=True)
     sample_list = t ### This is the actual order in the input expression files
 
     for x in t:
@@ -670,7 +673,13 @@ def selectiveFloats(values):
         except Exception: float_values.append(None)
     return float_values
 
-def identifyMarkers(filename,cluster_comps):
+def binaryExp(value):
+    if value>1:
+        return 2
+    else:
+        return 0
+    
+def identifyMarkers(filename,cluster_comps,binarize=False):
     """ This function is the real workhorse of markerFinder, which coordinates the correlation analyses and data import """
     
     global tissue_scores; tissue_scores={}; print_interval=2000; print_limit=2000
@@ -766,7 +775,9 @@ def identifyMarkers(filename,cluster_comps):
                     if 'ENS' in probeset:
                         geneID, probeset = probeset,geneID
                         probeset=geneID+':'+probeset
-                except Exception: pass
+                except Exception:
+                    if 'ENS' in probeset:
+                        geneID = probeset
                 try: symbol = gene_to_symbol[geneID][0]; description = ''
                 except Exception: pass
                 except Exception: symbol = probeset; description = ''
@@ -813,6 +824,8 @@ def identifyMarkers(filename,cluster_comps):
                         try: exp_values =  map(lambda x: math.log(x,2), exp_values)
                         except Exception:
                             exp_values =  map(lambda x: math.log(x+1,2), exp_values)
+                    if binarize:
+                        exp_values =  map(lambda x: binaryExp(x), exp_values)
                 if analyze_housekeeping == 'yes': ### Only grab these when analyzing all tissues
                     findHousekeepingGenes((probeset,symbol),exp_values)
                 elif platform == 'RNASeq': ### Exclude low expression (RPKM) genes
@@ -837,19 +850,29 @@ def identifyMarkers(filename,cluster_comps):
     
     #print len(Added),len(Queried),len(tissue_scores),count;sys.exit()
     tissue_specific_IDs={}; interim_correlations={}
-
+    gene_specific_rho_values = {}
+    tissue_list=[]
     for tissue in tissue_scores:
         tissue_scores[tissue].sort()
         tissue_scores[tissue].reverse()
         ranked_list=[]; ranked_lookup=[]
-        
+        if tissue not in tissue_list: tissue_list.append(tissue) ### Keep track of the tissue order
         for ((rho,p),(probeset,symbol)) in tissue_scores[tissue]:
+            
+            if correlateAllGenes:
+                try: all_genes_ranked[probeset,symbol].append([(rho,p),tissue])
+                except Exception:all_genes_ranked[probeset,symbol] = [[(rho,p),tissue]]
+                
+            ### Get a matrix of all genes to correlations
+            try: gene_specific_rho_values[symbol].append(rho)
+            except Exception: gene_specific_rho_values[symbol] = [rho]
+            
             if symbol == '': symbol = probeset
             #print tissue, tissue_scores[tissue];sys.exit()
             if symbol not in ranked_list:
                 ranked_list.append(symbol); ranked_lookup.append([probeset,symbol,(rho,p)])
         for (probeset,symbol,(rho,p)) in ranked_lookup[:genesToReport]:  ### Here is where we would compare rho values between tissues with the same probesets
-            if rho>0.1 and p<0.1:
+            if rho>0.01 and p<0.1:
                 if compare_clusters == 'yes':
                     try: tissue_specific_IDs[tissue].append(probeset)
                     except Exception: tissue_specific_IDs[tissue] = [probeset]
@@ -858,17 +881,20 @@ def identifyMarkers(filename,cluster_comps):
                     except Exception: tissue_specific_IDs[probeset] = [tissue]
                 try: interim_correlations[tissue].append([probeset,symbol,(rho,p)])
                 except Exception: interim_correlations[tissue] = [[probeset,symbol,(rho,p)]]    
-        if correlateAllGenes:
-            for tissue in tissue_scores:
-                for ((rho,p),(probeset,symbol)) in tissue_scores[tissue]:
-                    try: all_genes_ranked[probeset,symbol].append([(rho,p),tissue])
-                    except Exception:all_genes_ranked[probeset,symbol] = [[(rho,p),tissue]]
-    """
-    for ID in all_genes_ranked:
-        ag = all_genes_ranked[ID]
-        ag.sort()
-        all_genes_ranked[ID] = ag[-1] ### topcorrelated
-    """
+
+    if correlateAllGenes:  ### This was commented out - Not sure why - get an error downstream otherwise
+        for ID in all_genes_ranked:
+            ag = all_genes_ranked[ID]
+            ag.sort()
+            all_genes_ranked[ID] = ag[-1] ### topcorrelated
+
+    #"""
+    data = export.ExportFile(string.replace(filename[:-4]+'-all-correlations.txt','exp.','MarkerFinder.'))
+    data.write(string.join(tissue_list,'\t')+'\n')
+    for gene in gene_specific_rho_values:
+        data.write(string.join([gene]+map(str,gene_specific_rho_values[gene]),'\t')+'\n')
+    #sys.exit()
+    #"""
     #print len(tissue_specific_IDs);sys.exit()
     return tissue_specific_IDs,interim_correlations,annotation_headers,tissues
 
@@ -901,6 +927,7 @@ def exportMarkerGeneProfiles(original_filename,annotations,expression_relative,t
 def exportAllGeneCorrelations(filename,allGenesRanked):
     destination_dir = export.findParentDir(filename)
     filename = destination_dir+'MarkerFinder/AllGenes_correlations.txt'
+    filename = string.replace(filename,'ExpressionInput','ExpressionOutput')
     try:
         if use_replicates:
             filename = string.replace(filename,'.txt','-ReplicateBased.txt')
@@ -910,13 +937,19 @@ def exportAllGeneCorrelations(filename,allGenesRanked):
     data = export.ExportFile(filename)
     title_row = string.join(['UID','Symbol','Pearson rho','Pearson p-value','Cell State'],'\t')
     data.write(title_row+'\n')
+    rho_sorted=[]
     for (probeset,symbol) in allGenesRanked:
-        try: (rho,p),tissue = allGenesRanked[(probeset,symbol)]
+        try:
+            (rho,p),tissue = allGenesRanked[(probeset,symbol)]
         except Exception:
             ### Applies to tiered analysis
             allGenesRanked[(probeset,symbol)].sort()
             (rho,p),tissue = allGenesRanked[(probeset,symbol)][-1]
+
         values = string.join([probeset,symbol,str(rho),str(p),tissue],'\t')+'\n'
+        rho_sorted.append([(tissue,1.0/rho),values])
+    rho_sorted.sort()
+    for (x,values) in rho_sorted:
         data.write(values)
     data.close()
     
@@ -962,7 +995,7 @@ def getAverageExpressionValues(filename,platform):
     """ This function imports two file sets: (A) The original raw input expression files and groups and (B) the DATASET file with annotations.
     It outputs a new file with annotations and average stats for all groups (some group avgs can be missing from the DATASET file)."""
 
-    ### Get the original expression input file location    
+    ### Get the original expression input file location
     if 'ExpressionInput' in filename:
         exp_input_dir = filename
     else:
@@ -1915,12 +1948,13 @@ def importAndAverageStatsData(expr_input,compendium_filename,platform):
     export_data.close()
     return export_path
 
-def logTransformWithNAs(values):
+def floatWithNAs(values):
     values2=[]
     for x in values:
-        try: values2.append(math.log(float(x),2))
+        try: values2.append(float(x)) #values2.append(math.log(float(x),2))
         except Exception:
-            values2.append(0.00001)
+            #values2.append(0.00001)
+            values2.append('')
     return values2
 
 def importAndAverageExport(expr_input,platform,annotationDB=None,annotationHeader=None,customExportPath=None):
@@ -1988,11 +2022,16 @@ def importAndAverageExport(expr_input,platform,annotationDB=None,annotationHeade
         else:
             uid = t[0]
             try: values = map(float,t[1:])
-            except Exception: values = logTransformWithNAs(t[1:])
+            except Exception: values = floatWithNAs(t[1:])
             avg_z=[]
             for group_name in group_index_db:
                 group_values = map(lambda x: values[x], group_index_db[group_name]) ### simple and fast way to reorganize the samples
-                avg = statistics.avg(group_values) #stdev
+                group_values = [x for x in group_values if x != ''] ### Remove NAs from the group
+                five_percent_len = int(len(group_values)*0.05)
+                if len(group_values)>five_percent_len:
+                    avg = statistics.avg(group_values) #stdev
+                else:
+                    avg = ''
                 avg_z.append(str(avg))
             if uid in annotationDB:
                 annotations = annotationDB[uid] ### If provided as an option to the function

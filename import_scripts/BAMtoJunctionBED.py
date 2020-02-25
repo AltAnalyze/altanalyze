@@ -24,6 +24,7 @@ strand notations from other aligners (check with the software authors)."""
 import sys,string,os
 sys.path.insert(1, os.path.join(sys.path[0], '..')) ### import parent dir dependencies
 import pysam
+#import bamnostic as pysam
 import copy,getopt
 import time
 import traceback
@@ -39,8 +40,14 @@ try:
     import cvcf
 except Exception:
     try:
-        if os.name != 'posix': print traceback.format_exc()
+        #if os.name != 'posix': print traceback.format_exc()
+        pass
     except Exception: pass
+try:
+    from pysam import libctabixproxies
+except:
+    #print traceback.format_exc()
+    pass
 
 def getSpliceSites(cigarList,X):
     cummulative=0
@@ -63,20 +70,28 @@ def writeJunctionBedFile(junction_db,jid,o):
         if tophat_strand==None:
             strandStatus = False
         break
-
-    if strandStatus== False: ### If no strand information in the bam file filter and add known strand data
-        junction_db2={}
-        for (chr,jc,tophat_strand) in junction_db:
-            original_chr = chr
-            if 'chr' not in chr:
-                chr = 'chr'+chr
-            for j in jc:                
+    
+    #if strandStatus== False: ### If no strand information in the bam file filter and add known strand data
+    junction_db2={}
+    strand='+'
+    for (chr,jc,tophat_strand) in junction_db:
+        original_chr = chr
+        if 'chr' not in chr:
+            chr = 'chr'+chr
+        for j in jc:
+            if tophat_strand==None:
                 try:
                     strand = splicesite_db[chr,j]
                     junction_db2[(original_chr,jc,strand)]=junction_db[(original_chr,jc,tophat_strand)]
-                except Exception: pass
-        junction_db = junction_db2
-    
+                except Exception:
+                    ### Assume the strand is the last strand detected (in the same genomic region)
+                    junction_db2[(original_chr,jc,strand)]=junction_db[(original_chr,jc,tophat_strand)]
+            else:
+                ### Programs like HISAT2 have some reads with strand assigned and others without
+                junction_db2[(original_chr,jc,tophat_strand)]=junction_db[(original_chr,jc,tophat_strand)]
+
+    junction_db = junction_db2
+
     for (chr,jc,tophat_strand) in junction_db:
         x_ls=[]; y_ls=[]; dist_ls=[]
         read_count = str(len(junction_db[(chr,jc,tophat_strand)]))
@@ -130,16 +145,17 @@ def retreiveAllKnownSpliceSites(returnExonRetention=False,DesignatedSpecies=None
     
     splicesite_db={}
     gene_coord_db={}
+    length=0
     try:
+        #if ExonReference==None:
         exon_dir = 'AltDatabase/ensembl/'+species+'/'+species+'_Ensembl_exon.txt'
         length = verifyFileLength(exon_dir)
     except Exception:
         #print traceback.format_exc();sys.exit()
-        length = 0
+        pass
     if length==0:
         exon_dir = ExonReference
     refExonCoordinateFile = unique.filepath(exon_dir)
-
     firstLine=True
     for line in open(refExonCoordinateFile,'rU').xreadlines():
         if firstLine: firstLine=False
@@ -169,6 +185,27 @@ def retreiveAllKnownSpliceSites(returnExonRetention=False,DesignatedSpecies=None
         gene_coord_db[i] = [gene_coord_db[i][0],gene_coord_db[i][-1]]
     return splicesite_db,chromosomes_found,gene_coord_db
 
+def exportIndexes(input_dir):
+    import unique
+    bam_dirs = unique.read_directory(input_dir)
+    print 'Building BAM index files',
+    for file in bam_dirs:
+        if string.lower(file[-4:]) == '.bam':
+            bam_dir = input_dir+'/'+file
+            bamf = pysam.Samfile(bam_dir, "rb" )
+            ### Is there an indexed .bai for the BAM? Check.
+            try:
+                for entry in bamf.fetch():
+                    codes = map(lambda x: x[0],entry.cigar)
+                    break
+            except Exception:
+                ### Make BAM Indexv lciv9df8scivx 
+                print '.',
+                bam_dir = str(bam_dir)
+                #On Windows, this indexing step will fail if the __init__ pysam file line 51 is not set to - catch_stdout = False
+                pysam.index(bam_dir)
+                bamf = pysam.Samfile(bam_dir, "rb" )        
+
 def parseJunctionEntries(bam_dir,multi=False, Species=None, ReferenceDir=None):
     global bam_file
     global splicesite_db
@@ -177,10 +214,11 @@ def parseJunctionEntries(bam_dir,multi=False, Species=None, ReferenceDir=None):
     IndicatedSpecies = Species
     ExonReference = ReferenceDir
     bam_file = bam_dir
-    try: splicesite_db,chromosomes_found = retreiveAllKnownSpliceSites()
+    try: splicesite_db,chromosomes_found, gene_coord_db = retreiveAllKnownSpliceSites()
     except Exception:
-        #print traceback.format_exc()
+        print traceback.format_exc()
         splicesite_db={}; chromosomes_found={}
+
     start = time.time()
     try: import collections; junction_db=collections.OrderedDict()
     except Exception:
@@ -189,7 +227,7 @@ def parseJunctionEntries(bam_dir,multi=False, Species=None, ReferenceDir=None):
     original_junction_db = copy.deepcopy(junction_db)
     
     bamf = pysam.Samfile(bam_dir, "rb" )
-    ### Is there are indexed .bai for the BAM? Check.
+    ### Is there an indexed .bai for the BAM? Check.
     try:
         for entry in bamf.fetch():
             codes = map(lambda x: x[0],entry.cigar)
@@ -205,6 +243,7 @@ def parseJunctionEntries(bam_dir,multi=False, Species=None, ReferenceDir=None):
 
     chromosome = False
     chromosomes={}
+    bam_reads=0
     count=0
     jid = 1
     prior_jc_start=0
@@ -217,6 +256,7 @@ def parseJunctionEntries(bam_dir,multi=False, Species=None, ReferenceDir=None):
         isoform_junctions = copy.deepcopy(junction_db)
     outlier_start = 0; outlier_end = 0; read_count = 0; c=0
     for entry in bamf.fetch():
+      bam_reads+=1
       try: cigarstring = entry.cigarstring
       except Exception:
           codes = map(lambda x: x[0],entry.cigar)
@@ -231,10 +271,12 @@ def parseJunctionEntries(bam_dir,multi=False, Species=None, ReferenceDir=None):
                 #writeIsoformFile(isoform_junctions,io)
                 junction_db = copy.deepcopy(original_junction_db) ### Re-set this object
                 jid+=1
-
+            
             chromosome = bamf.getrname( entry.rname )
             chromosomes[chromosome]=[] ### keep track
             X=entry.pos
+            #if entry.query_name == 'SRR791044.33673569':
+            #print chromosome, entry.pos, entry.reference_length, entry.alen, entry.query_name
             Y=entry.pos+entry.alen
             prior_jc_start = X
 
@@ -243,7 +285,8 @@ def parseJunctionEntries(bam_dir,multi=False, Species=None, ReferenceDir=None):
                 #if multi == False:  print 'No TopHat strand information';sys.exit()
                 tophat_strand = None
             coordinates,up_to_intron_dist = getSpliceSites(entry.cigar,X)
-
+            #if count > 100: sys.exit()
+            #print entry.query_name,X, Y, entry.cigarstring, entry.cigar, tophat_strand
             for (five_prime_ss,three_prime_ss) in coordinates:
                 jc = five_prime_ss,three_prime_ss
                 #print X, Y, jc, entry.cigarstring, entry.cigar
@@ -272,7 +315,7 @@ def parseJunctionEntries(bam_dir,multi=False, Species=None, ReferenceDir=None):
             count+=1
     writeJunctionBedFile(junction_db,jid,o) ### One last read-out
     if multi == False:
-        print time.time()-start, 'seconds required to parse the BAM file'
+        print bam_reads, count, time.time()-start, 'seconds required to parse the BAM file'
     o.close()
     bamf.close()
     
@@ -297,6 +340,7 @@ if __name__ == "__main__":
         sys.exit()
     else:
         Species = None
+        reference_dir = None
         options, remainder = getopt.getopt(sys.argv[1:],'', ['i=','species=','r='])
         for opt, arg in options:
             if opt == '--i': bam_dir=arg ### full path of a BAM file

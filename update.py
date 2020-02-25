@@ -30,6 +30,7 @@ import export
 import traceback
 try: from build_scripts import ExonArray
 except Exception: null=[]
+import traceback
 
 def filepath(filename):
     fn = unique.filepath(filename)
@@ -67,12 +68,14 @@ def zipDirectory(dir):
 
 def unzipFiles(filename,dir):
     import zipfile
-    output_filepath = filepath(dir+filename)
+    output_filepath = filepath(dir+'/'+filename)
     try:
         zfile = zipfile.ZipFile(output_filepath)
         for name in zfile.namelist():
             if name.endswith('/'):null=[] ### Don't need to export
             else:
+                if 'EnsMart' in name and 'EnsMart' in dir:
+                    dir = export.findParentDir(dir[:-1]) ### Remove EnsMart suffix directory
                 try: outfile = export.ExportFile(filepath(dir+name))
                 except Exception: outfile = export.ExportFile(filepath(dir+name[1:]))
                 outfile.write(zfile.read(name)); outfile.close()
@@ -292,11 +295,15 @@ def download(url,dir,file_type):
     global suppress_printouts
     try: suppress_printouts = Suppress_Printouts
     except Exception: suppress_printouts = 'no'
-
     try: dp = download_protocol(url,dir,file_type); output_filepath, status  = dp.getStatus(); fp = output_filepath
     except Exception:
-        output_filepath='failed'; status = "Internet connection not established. Re-establish and try again."
-        fp = filepath(dir+url.split('/')[-1]) ### Remove this empty object if saved
+        #print traceback.format_exc()
+        try:
+            dir = unique.filepath(dir) ### Can result in the wrong filepath exported for AltDatabase RNA-Seq zip files (don't include by default)
+            dp = download_protocol(url,dir,file_type); output_filepath, status  = dp.getStatus(); fp = output_filepath
+        except Exception:
+            output_filepath='failed'; status = "Internet connection not established. Re-establish and try again."
+            fp = filepath(dir+url.split('/')[-1]) ### Remove this empty object if saved
     if 'Internet' not in status:
         if '.zip' in fp or '.gz' in fp or '.tar' in fp:
             #print "\nRemoving zip file:",fp
@@ -312,27 +319,36 @@ class download_protocol:
     def __init__(self,url,dir,file_type):
         try: self.suppress = suppress_printouts
         except Exception: self.suppress = 'no'
-        dir = unique.filepath(dir)
         """Copy the contents of a file from a given URL to a local file."""
         filename = url.split('/')[-1]; self.status = ''
         #print [url, dir, file_type]
+        #dir = unique.filepath(dir) ### Can screw up directory structures
         if file_type == None: file_type =''
         if len(file_type) == 2: filename, file_type = file_type ### Added this feature for when a file has an invalid filename
-        output_filepath_object = export.createExportFile(dir+filename,dir[:-1])
-        output_filepath = filepath(dir+filename); self.output_filepath = output_filepath
+        output_filepath = unique.filepath(dir+filename, force='application-path')
+        dir = export.findParentDir(output_filepath)
+        output_filepath_object = export.createExportFile(output_filepath,dir[:-1])
+
+        self.output_filepath = output_filepath
         
         if self.suppress == 'no':
             print "Downloading the following file:",filename,' ',
-        
         self.original_increment = 5
         self.increment = 0
-        import urllib; reload(urllib)  ### https://bugs.python.org/issue1067702 - some machines the socket doesn't close and causes an error - reload to close the socket
+        import urllib
         from urllib import urlretrieve
         #if 'gene.txt.gz' in url: print [self.reporthookFunction];sys.exit()
-        try: webfile, msg = urlretrieve(url,output_filepath,reporthook=self.reporthookFunction)
-        except Exception:
-            #print traceback.format_exc();sys.exit()
+        try:
+            try: webfile, msg = urlretrieve(url,output_filepath,reporthook=self.reporthookFunction)
+            except IOError:
+                if 'Binary' in traceback.format_exc(): #IOError: [Errno ftp error] 200 Switching to Binary mode.
+                    ### https://bugs.python.org/issue1067702 - some machines the socket doesn't close and causes an error - reload to close the socket
+                    reload(urllib)
+                    webfile, msg = urlretrieve(url,output_filepath,reporthook=self.reporthookFunction)
+                    reload(urllib)
+        except:
             print 'Unknown URL error encountered...'; forceURLError
+
         if self.suppress == 'no': print ''
         self.testFile()
         if self.suppress == 'no': print self.status
@@ -430,7 +446,6 @@ def downloadCurrentVersion(filename,secondary_dir,file_type):
     dir = string.replace(dir,'hGlue','')  ### Used since the hGlue data is in a sub-directory
     filename = export.findFilename(filename)
     url = url_dir+secondary_dir+'/'+filename
-    print url
     file,status = download(url,dir,file_type); continue_analysis = 'yes'
     if 'Internet' in status and 'nnot' not in filename: ### Exclude for Affymetrix annotation files
         print_out = "File:\n"+url+"\ncould not be found on the server or an internet connection is unavailable."
@@ -523,7 +538,16 @@ def executeParameters(species,array_type,force,genomic_build,update_uniprot,upda
         else: buildExonArrayExonAnnotations(species,array_type,force)
 
     if update_domain == 'yes':
+        if array_type == 'RNASeq':
+            only_rely_on_coordinate_mapping = True ### This will provide more accurate results as many junctions have missing sequences
+        else:
+            only_rely_on_coordinate_mapping = False
 
+        from build_scripts import FeatureAlignment
+        from build_scripts import JunctionArray
+        from build_scripts import mRNASeqAlign
+        from build_scripts import IdentifyAltIsoforms
+        
         ### Get UCSC associations for all Ensembl linked genes (download databases if necessary)        if species == 'Mm' and array_type == 'AltMouse':
         mRNA_Type = 'mrna'; run_from_scratch = 'yes'
         export_all_associations = 'yes' ### YES only for protein prediction analysis
@@ -531,26 +555,27 @@ def executeParameters(species,array_type,force,genomic_build,update_uniprot,upda
 
         if (species == 'Mm' and array_type == 'AltMouse'):
             """Imports and re-exports array-Ensembl annotations"""
-            from build_scripts import JunctionArray
             null = JunctionArray.importArrayAnnotations(species,array_type); null={}
         if (species == 'Mm' and array_type == 'AltMouse') or array_type == 'junction' or array_type == 'RNASeq':
-            """Performs probeset sequence aligment to Ensembl and UCSC transcripts. To do: Need to setup download if files missing"""
-            from build_scripts import mRNASeqAlign; analysis_type = 'reciprocal'
-            mRNASeqAlign.alignProbesetsToTranscripts(species,array_type,analysis_type,force)
-       
-        from build_scripts import IdentifyAltIsoforms; run_seqcomp = 'no'
-        IdentifyAltIsoforms.runProgram(species,array_type,'null',force,run_seqcomp)
-        from build_scripts import FeatureAlignment; from build_scripts import JunctionArray
-        FeatureAlignment.findDomainsByGenomeCoordinates(species,array_type,'null')
+            if only_rely_on_coordinate_mapping == False:
+                """Performs probeset sequence aligment to Ensembl and UCSC transcripts. To do: Need to setup download if files missing"""
+                analysis_type = 'reciprocal'
+                mRNASeqAlign.alignProbesetsToTranscripts(species,array_type,analysis_type,force)
+    
+        run_seqcomp = 'no'
+        if only_rely_on_coordinate_mapping == False:
+            IdentifyAltIsoforms.runProgram(species,array_type,'null',force,run_seqcomp)
+            FeatureAlignment.findDomainsByGenomeCoordinates(species,array_type,'null')
         
         if array_type == 'junction' or array_type == 'RNASeq':
-            ### For junction probeset sequences from mRNASeqAlign(), find and assess alternative proteins - export to the folder 'junction'
-            mRNASeqAlign.alignProbesetsToTranscripts(species,array_type,'single',force)
-            IdentifyAltIsoforms.runProgram(species,array_type,'junction',force,run_seqcomp)
-            FeatureAlignment.findDomainsByGenomeCoordinates(species,array_type,'junction')
-            ### For exon probesets (and junction exons) align and assess alternative proteins - export to the folder 'exon'
-            IdentifyAltIsoforms.runProgram(species,array_type,'exon',force,run_seqcomp)
-            # FeatureAlignment.findDomainsByGenomeCoordinates(species,array_type,'exon') # not needed
+            if only_rely_on_coordinate_mapping == False:
+                ### For junction probeset sequences from mRNASeqAlign(), find and assess alternative proteins - export to the folder 'junction'
+                mRNASeqAlign.alignProbesetsToTranscripts(species,array_type,'single',force)
+                IdentifyAltIsoforms.runProgram(species,array_type,'junction',force,run_seqcomp)
+                FeatureAlignment.findDomainsByGenomeCoordinates(species,array_type,'junction')
+                ### For exon probesets (and junction exons) align and assess alternative proteins - export to the folder 'exon'
+                IdentifyAltIsoforms.runProgram(species,array_type,'exon',force,run_seqcomp)
+                FeatureAlignment.findDomainsByGenomeCoordinates(species,array_type,'exon') # not needed
             
             """ Repeat above with CoordinateBasedMatching = True """ 
             ### Peform coordinate based junction mapping to transcripts (requires certain sequence files built in IdentifyAltIosofmrs)
@@ -578,7 +603,7 @@ def executeParameters(species,array_type,force,genomic_build,update_uniprot,upda
             ExonSeqModule.runProgram(species,array_type,process_microRNA_predictions,mir_source,stringency)
             ExonArray.exportMetaProbesets(array_type,species) ### Export metaprobesets for this build
         else:
-            import JunctionSeqModule
+            from build_scripts  import JunctionSeqModule
             stringency = 'strict'; mir_source = 'multiple'
             JunctionSeqModule.runProgram(species,array_type,mir_source,stringency,force)
             stringency = 'lax'
@@ -649,14 +674,16 @@ if __name__ == '__main__':
     #unzipFiles('Rn.zip', 'AltDatabaseNoVersion/');kill    
     #filename = 'http://altanalyze.org/archiveDBs/LibraryFiles/Mouse430_2.zip'
     #filename = 'AltDatabase/affymetrix/LibraryFiles/Mouse430_2.zip'
-    #downloadCurrentVersionUI(filename,'LibraryFiles','','')
+    filename = 'AltDatabase/Mm_RNASeq.zip'; dir = 'AltDatabase/updated/EnsMart72'
+    #downloadCurrentVersionUI(filename,dir,'','')
     import update
-    dp = update.download_protocol('ftp://ftp.ensembl.org/pub/release-72/mysql/macaca_mulatta_core_72_10/gene.txt.gz','AltDatabase/ensembl/Ma/EnsemblSQL/','')
-    dp = update.download_protocol('ftp://ftp.ensembl.org/pub/release-72/mysql/macaca_mulatta_core_72_10/gene.txt.gz','AltDatabase/ensembl/Ma/EnsemblSQL/','');sys.exit()
+    dp = update.download_protocol('ftp://ftp.ensembl.org/pub/release-72/fasta/homo_sapiens/cdna/Homo_sapiens.GRCh37.72.cdna.all.fa.gz','AltDatabase/Hs/SequenceData/','');sys.exit()
+    #dp = update.download_protocol('ftp://ftp.ensembl.org/pub/release-72/mysql/macaca_mulatta_core_72_10/gene.txt.gz','AltDatabase/ensembl/Ma/EnsemblSQL/','');sys.exit()
 
     #kill
     #target_folder = 'Databases/Ci'; zipDirectory(target_folder)
-    #unzipFiles('Cs.zip', 'Databases/');kill
+    filename = 'Mm_RNASeq.zip'; dir = 'AltDatabase/EnsMart72/'
+    unzipFiles(filename, dir);sys.exit()
     #buildUniProtFunctAnnotations('Hs',force='no')
 
     species = 'Hs'; array_type = 'junction'; force = 'yes'; run_seqcomp = 'no'

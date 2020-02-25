@@ -19,7 +19,7 @@ import traceback
 import anydbm
 import dbhash
 count_sum_array_db={}
-sampleReadDepth={}
+sampleReadDepth={} 
 
 def cleanUpLine(line):
     line = string.replace(line,'\n','')
@@ -485,7 +485,14 @@ def remoteSashimiPlot(Species,fl,bamdir,eventsToVisualizeFilename,events=None,sh
         for file in files:
             if 'counts.' in file and 'steady-state.txt' not in file:
                 countinp = search_dir+'/'+file
-    
+
+    ### Export BAM file indexes
+    from import_scripts import BAMtoJunctionBED
+    try: BAMtoJunctionBED.exportIndexes(root_dir)
+    except:
+        print 'BAM file indexing failed...'
+        print traceback.format_exc()
+        
     PSIFilename = root_dir+'/AltResults/AlternativeOutput/'+species+'_RNASeq_top_alt_junctions-PSI.txt'
     
     import ExpressionBuilder
@@ -566,11 +573,11 @@ def justConvertFilenames(species,outputdir):
                 continue
             
 if __name__ == '__main__':
-    root_dir = '/Users/saljh8/Desktop/Grimes/GEC14074/'
-    events = ['ENSMUSG00000000171:I2.1-E3.1']
-    #events = None
+    root_dir = '/Volumes/salomonis2/Bruce_conklin_data/Pig-RNASeq/bams/'
+    events = ['ENSSSCG00000024564']
+    events = None
     eventsToVisualizeFilename = None
-    #eventsToVisualizeFilename = '/Volumes/salomonis2/Ichi_data/bams/AltResults/AlternativeOutput/top50/top_pvalue.txt'
+    eventsToVisualizeFilename = '/Volumes/salomonis2/Bruce_conklin_data/Pig-RNASeq/events.txt'
     bamdir = root_dir
-    remoteSashimiPlot('Mm', root_dir, bamdir, eventsToVisualizeFilename, events=events, show=False)
+    remoteSashimiPlot('Ss', root_dir, bamdir, eventsToVisualizeFilename, events=events, show=False)
     sys.exit()
